@@ -248,3 +248,7 @@ server.listen(PORT, () => {
   console.log(`🚀 SpeakCircle server running on port ${PORT}`);
   console.log(`🔌 Socket.IO is ready for real-time connections`);
 });
+
+app.get("/", (req, res) => {
+  res.send("Backend is running 🚀");
+});
