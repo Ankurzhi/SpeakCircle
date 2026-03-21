@@ -126,3 +126,4 @@ const closeRoom = async (req, res) => {
 };
 
 module.exports = { getRooms, createRoom, joinRoom, completeSession, closeRoom };
+
