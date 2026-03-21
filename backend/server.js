@@ -232,6 +232,9 @@ app.use('/api', require('./routes/general'));
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'SpeakCircle API is running 🎤' });
 });
+app.get("/", (req, res) => {
+  res.send("Backend is running 🚀");
+});
 
 app.use((req, res) => {
   res.status(404).json({ success: false, message: 'Route not found' });
@@ -249,6 +252,3 @@ server.listen(PORT, () => {
   console.log(`🔌 Socket.IO is ready for real-time connections`);
 });
 
-app.get("/", (req, res) => {
-  res.send("Backend is running 🚀");
-});
