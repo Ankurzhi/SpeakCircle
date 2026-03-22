@@ -239,6 +239,9 @@ app.use(cors({
   ].filter(Boolean),
   credentials: true,
 }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 
 // ─── REST Routes ─────────────────────────────────────────────────────────────
 app.use('/api/auth', require('./routes/auth'));
