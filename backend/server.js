@@ -47,15 +47,24 @@ const app = express();
 const server = http.createServer(app); // Wrap express in http server
 
 // ─── Socket.IO Setup ────────────────────────────────────────────────────────
+// const io = new Server(server, {
+//   cors: {
+//     origin: process.env.CLIENT_URL || 'http://localhost:5173',
+//     methods: ['GET', 'POST'],
+//     credentials: true,
+//   },
+//   pingTimeout: 60000,       // 60s before declaring client disconnected
+//   pingInterval: 25000,      // Send ping every 25s
+//   transports: ['websocket', 'polling'], // Try websocket first, fall back to polling
+// });
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST'],
+    origin: [
+      'http://localhost:5173',
+      process.env.CLIENT_URL,
+    ].filter(Boolean),
     credentials: true,
   },
-  pingTimeout: 60000,       // 60s before declaring client disconnected
-  pingInterval: 25000,      // Send ping every 25s
-  transports: ['websocket', 'polling'], // Try websocket first, fall back to polling
 });
 
 // ─── In-memory room state (fast, no DB round-trips for chat/mic) ─────────────
@@ -217,12 +226,19 @@ function _leaveRoom(socket, roomId) {
 }
 
 // ─── Express Middleware ───────────────────────────────────────────────────────
+// app.use(cors({
+//   origin: process.env.CLIENT_URL || 'http://localhost:5173',
+//   credentials: true,
+// }));
+// app.use(express.json());
+// app.use(express.urlencoded({ extended: true }));
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: [
+    'http://localhost:5173',
+    process.env.CLIENT_URL,
+  ].filter(Boolean),
   credentials: true,
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 // ─── REST Routes ─────────────────────────────────────────────────────────────
 app.use('/api/auth', require('./routes/auth'));
