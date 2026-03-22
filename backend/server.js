@@ -57,10 +57,20 @@ const server = http.createServer(app); // Wrap express in http server
 //   pingInterval: 25000,      // Send ping every 25s
 //   transports: ['websocket', 'polling'], // Try websocket first, fall back to polling
 // });
+// const io = new Server(server, {
+//   cors: {
+//     origin: [
+//       'http://localhost:5173',
+//       process.env.CLIENT_URL,
+//     ].filter(Boolean),
+//     credentials: true,
+//   },
+// });
 const io = new Server(server, {
   cors: {
     origin: [
       'http://localhost:5173',
+      'https://speak-circle-eight.vercel.app',
       process.env.CLIENT_URL,
     ].filter(Boolean),
     credentials: true,
@@ -232,9 +242,17 @@ function _leaveRoom(socket, roomId) {
 // }));
 // app.use(express.json());
 // app.use(express.urlencoded({ extended: true }));
+// app.use(cors({
+//   origin: [
+//     'http://localhost:5173',
+//     process.env.CLIENT_URL,
+//   ].filter(Boolean),
+//   credentials: true,
+// }));
 app.use(cors({
   origin: [
     'http://localhost:5173',
+    'https://speak-circle-eight.vercel.app',
     process.env.CLIENT_URL,
   ].filter(Boolean),
   credentials: true,
