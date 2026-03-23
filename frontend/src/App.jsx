@@ -32,6 +32,17 @@ function App() {
   useEffect(() => {
     AOS.init({ duration: 700, easing: 'ease-out-cubic', once: true, offset: 60 })
   }, [])
+  useEffect(() => {
+  AOS.init({ duration: 700, easing: 'ease-out-cubic', once: true, offset: 60 })
+
+  // Keep Render backend awake — ping every 10 minutes
+  const ping = () => {
+    fetch(`${import.meta.env.VITE_API_URL}/api/health`).catch(() => {})
+  }
+  ping()
+  const interval = setInterval(ping, 600000)
+  return () => clearInterval(interval)
+}, [])
 
   if (loading) return <Loader />
 
