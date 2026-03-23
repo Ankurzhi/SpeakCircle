@@ -29,10 +29,7 @@ const ProtectedRoute = ({ children }) => {
 function App() {
   const { loading } = useAuth()
 
-  useEffect(() => {
-    AOS.init({ duration: 700, easing: 'ease-out-cubic', once: true, offset: 60 })
-  }, [])
-  useEffect(() => {
+useEffect(() => {
   AOS.init({ duration: 700, easing: 'ease-out-cubic', once: true, offset: 60 })
 
   // Keep Render backend awake — ping every 10 minutes
