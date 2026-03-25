@@ -88,12 +88,34 @@ const RoomLive = () => {
   const peersRef = useRef({}) // socketId -> RTCPeerConnection
 
   // WebRTC config (STUN for NAT traversal)
+  //28/03
+  // const rtcConfig = {
+  //   iceServers: [
+  //     { urls: 'stun:stun.l.google.com:19302' },
+  //     { urls: 'stun:stun1.l.google.com:19302' },
+  //   ],
+  // }
+  //28/03
+
+  //28/03
   const rtcConfig = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-    ],
-  }
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: [
+        'turn:a.relay.metered.ca:80',
+        'turn:a.relay.metered.ca:443',
+        'turn:a.relay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ],
+  iceCandidatePoolSize: 10,
+}
+   //28/03
+
 
   // ── Scroll to bottom on new message ──────────────────────────────────────
   useEffect(() => {
@@ -131,14 +153,32 @@ const RoomLive = () => {
     })
 
     // New user joined
-    socket.on('user-joined', (userData) => {
-      setParticipants((prev) => {
-        if (prev.find((p) => p.socketId === userData.socketId)) return prev
-        return [...prev, userData]
-      })
-      addSystemMessage(`${userData.name} joined the room`)
-    })
+    //26-03
+    // socket.on('user-joined', (userData) => {
+    //   setParticipants((prev) => {
+    //     if (prev.find((p) => p.socketId === userData.socketId)) return prev
+    //     return [...prev, userData]
+    //   })
+    //   addSystemMessage(`${userData.name} joined the room`)
+    // })
+    //26-03//
 
+    //26-03//
+
+    socket.on('user-joined', (userData) => {
+  setParticipants((prev) => {
+    if (prev.find((p) => p.socketId === userData.socketId)) return prev
+    return [...prev, userData]
+  })
+  addSystemMessage(`${userData.name} joined the room`)
+
+  // If we are in voice, call the new user immediately
+  if (localStreamRef.current) {
+    callPeer(userData.socketId, localStreamRef.current)
+  }
+})
+
+    //26-03//
     // User left
     socket.on('user-left', ({ socketId, name }) => {
       setParticipants((prev) => prev.filter((p) => p.socketId !== socketId))
@@ -263,7 +303,20 @@ const RoomLive = () => {
   // ── WebRTC: get microphone & call all existing participants ───────────────
   const startVoice = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      //26/03
+      // const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      //26/03
+      // 26/03
+      const stream = await navigator.mediaDevices.getUserMedia({
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    sampleRate: 48000,
+  },
+  video: false
+})
+//26-03
       localStreamRef.current = stream
       setVoiceEnabled(true)
 
@@ -319,6 +372,19 @@ const RoomLive = () => {
       if (existing) existing.remove()
       document.body.appendChild(audio)
     }
+
+
+    //26-03
+    // Restart ICE if connection fails
+pc.onconnectionstatechange = () => {
+  console.log(`Peer ${remoteSocketId} state:`, pc.connectionState)
+  if (pc.connectionState === 'failed') {
+    console.log('Connection failed, restarting ICE...')
+    pc.restartIce()
+  }
+}
+
+    //26-03
 
     return pc
   }
