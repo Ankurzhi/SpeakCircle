@@ -12,7 +12,7 @@
 // module.exports = router;
 const express = require('express');
 const router = express.Router();
-const { getRooms, createRoom, joinRoom, completeSession, closeRoom } = require('../controllers/roomController');
+const { getRooms, createRoom, joinRoom, completeSession, closeRoom,getRoomById  } = require('../controllers/roomController');
 const authMiddleware = require('../middleware/auth');
 
 router.get('/', getRooms);
@@ -21,4 +21,7 @@ router.post('/complete-session', authMiddleware, completeSession);  // ← BEFOR
 router.post('/:id/join', authMiddleware, joinRoom);
 router.patch('/:id/close', authMiddleware, closeRoom);
 
+//26-03
+router.get('/:id', getRoomById);
+//26-03
 module.exports = router;

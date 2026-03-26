@@ -6,6 +6,10 @@ const API = axios.create({
   baseURL: import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api',
 });
 
+//28-03
+export const getRoom = (id) => API.get(`/rooms/${id}`);
+//26-03
+
 // Attach JWT token to every request
 API.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');

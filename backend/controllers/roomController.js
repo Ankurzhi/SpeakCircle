@@ -124,6 +124,34 @@ const closeRoom = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
+//26-03
+const getRoomById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rooms] = await db.query(
+      `SELECT r.*, u.name as host_name 
+       FROM rooms r 
+       JOIN users u ON r.host_id = u.id 
+       WHERE r.id = ?`,
+      [id]
+    );
+    if (rooms.length === 0) {
+      return res.status(404).json({ success: false, message: 'Room not found' });
+    }
+    res.json({ success: true, room: rooms[0] });
+  } catch (err) {
+    console.error('Get room error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+//26-03
 
-module.exports = { getRooms, createRoom, joinRoom, completeSession, closeRoom };
 
+
+//26-03
+// module.exports = { getRooms, createRoom, joinRoom, completeSession, closeRoom };
+//26-03
+
+//26-03
+module.exports = { getRooms, createRoom, joinRoom, completeSession, closeRoom, getRoomById };
+//26-03
