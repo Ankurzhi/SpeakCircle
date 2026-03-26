@@ -1,58 +1,63 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useSocket } from '../context/SocketContext'
+// 26-03
+// import { joinRoom, completeSession } from '../services/api'
+// 26-03
+//26-03
 import { joinRoom, completeSession, getRoom } from '../services/api'
+//26-03
 
+
+// ─── Utility ──────────────────────────────────────────────────────────────────
 const fmtTime = (iso) => {
   const d = new Date(iso)
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
 const ParticipantCard = ({ p, isMe }) => (
   <div style={{
-    display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
-    borderRadius: 10,
-    background: p.isSpeaking ? 'rgba(99,102,241,0.12)' : 'rgba(0,0,0,0.03)',
+    display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+    borderRadius: 12, background: p.isSpeaking ? 'rgba(99,102,241,0.12)' : 'rgba(0,0,0,0.03)',
     border: `1.5px solid ${p.isSpeaking ? '#6366f1' : 'transparent'}`,
     transition: 'all 0.2s',
   }}>
     <div style={{
-      width: 32, height: 32, borderRadius: '50%',
-      background: 'linear-gradient(135deg,#6366f1,#a855f7)',
+      width: 38, height: 38, borderRadius: '50%', background: 'linear-gradient(135deg,#6366f1,#a855f7)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      color: '#fff', fontWeight: 700, fontSize: 13, flexShrink: 0,
+      color: '#fff', fontWeight: 700, fontSize: 15, flexShrink: 0,
       boxShadow: p.isSpeaking ? '0 0 0 3px rgba(99,102,241,0.4)' : 'none',
     }}>
       {p.name?.charAt(0).toUpperCase()}
     </div>
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {p.name} {isMe && <span style={{ color: '#6366f1', fontSize: 10 }}>(you)</span>}
+      <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {p.name} {isMe && <span style={{ color: '#6366f1', fontSize: 11 }}>(you)</span>}
       </div>
-      {p.isSpeaking && <div style={{ fontSize: 10, color: '#6366f1' }}>Speaking...</div>}
+      {p.isSpeaking && <div style={{ fontSize: 11, color: '#6366f1' }}>Speaking...</div>}
     </div>
-    <span style={{ fontSize: 14 }}>{p.isMuted ? '🔇' : '🎙️'}</span>
+    <span style={{ fontSize: 16 }}>{p.isMuted ? '🔇' : '🎙️'}</span>
   </div>
 )
 
 const ChatMessage = ({ msg, isMe }) => (
-  <div style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', gap: 6, marginBottom: 10 }}>
+  <div style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', gap: 8, marginBottom: 12 }}>
     <div style={{
-      width: 28, height: 28, borderRadius: '50%',
-      background: isMe ? '#6366f1' : '#e2e8f0',
+      width: 30, height: 30, borderRadius: '50%', background: isMe ? '#6366f1' : '#e2e8f0',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      color: isMe ? '#fff' : '#475569', fontWeight: 700, fontSize: 11, flexShrink: 0,
+      color: isMe ? '#fff' : '#475569', fontWeight: 700, fontSize: 12, flexShrink: 0,
     }}>
       {msg.name?.charAt(0).toUpperCase()}
     </div>
-    <div style={{ maxWidth: '75%' }}>
-      {!isMe && <div style={{ fontSize: 10, color: '#64748b', marginBottom: 2 }}>{msg.name}</div>}
+    <div style={{ maxWidth: '72%' }}>
+      {!isMe && <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>{msg.name}</div>}
       <div style={{
-        padding: '7px 11px',
-        borderRadius: isMe ? '14px 3px 14px 14px' : '3px 14px 14px 14px',
+        padding: '8px 12px', borderRadius: isMe ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
         background: isMe ? 'linear-gradient(135deg,#6366f1,#a855f7)' : '#f1f5f9',
-        color: isMe ? '#fff' : '#1e293b', fontSize: 13, lineHeight: 1.5,
+        color: isMe ? '#fff' : '#1e293b', fontSize: 14, lineHeight: 1.5,
         wordBreak: 'break-word',
       }}>
         {msg.message}
@@ -64,12 +69,14 @@ const ChatMessage = ({ msg, isMe }) => (
   </div>
 )
 
+// ─── Main RoomLive Component ──────────────────────────────────────────────────
 const RoomLive = () => {
   const { id: roomId } = useParams()
   const navigate = useNavigate()
   const { user } = useAuth()
   const { socket, connected } = useSocket()
 
+  // State
   const [participants, setParticipants] = useState([])
   const [messages, setMessages] = useState([])
   const [inputMsg, setInputMsg] = useState('')
@@ -79,80 +86,167 @@ const RoomLive = () => {
   const [error, setError] = useState(null)
   const [joined, setJoined] = useState(false)
   const [voiceEnabled, setVoiceEnabled] = useState(false)
-  const [roomInfo, setRoomInfo] = useState(null)
-  const [showParticipants, setShowParticipants] = useState(false)
+  const [roomInfo, setRoomInfo] = useState(null)//26-03
 
+  // Refs
   const messagesEndRef = useRef(null)
   const typingTimeout = useRef(null)
   const localStreamRef = useRef(null)
-  const peersRef = useRef({})
+  const peersRef = useRef({}) // socketId -> RTCPeerConnection
 
+  // WebRTC config (STUN for NAT traversal)
+  //28/03
+  // const rtcConfig = {
+  //   iceServers: [
+  //     { urls: 'stun:stun.l.google.com:19302' },
+  //     { urls: 'stun:stun1.l.google.com:19302' },
+  //   ],
+  // }
+  //28/03
+
+  //28/03
   const rtcConfig = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      {
-        urls: [
-          'turn:a.relay.metered.ca:80',
-          'turn:a.relay.metered.ca:443',
-          'turn:a.relay.metered.ca:443?transport=tcp',
-        ],
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
-    ],
-    iceCandidatePoolSize: 10,
-  }
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: [
+        'turn:a.relay.metered.ca:80',
+        'turn:a.relay.metered.ca:443',
+        'turn:a.relay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ],
+  iceCandidatePoolSize: 10,
+}
+   //28/03
 
+
+  // ── Scroll to bottom on new message ──────────────────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  useEffect(() => {
-    if (!roomId || !user) return
-    getRoom(roomId).then(r => setRoomInfo(r.data.room)).catch(() => {})
-    joinRoom(roomId)
-      .then(() => setJoined(true))
-      .catch((err) => setError(err.response?.data?.message || 'Could not join room'))
-    return () => stopVoice()
-  }, [roomId, user])
+  // ── Join room via REST then socket ────────────────────────────────────────
+  // 26-03
+  // useEffect(() => {
+  //   if (!roomId || !user) return
 
+  //   joinRoom(roomId)
+  //     .then(() => {
+  //       setJoined(true)
+  //     })
+  //     .catch((err) => {
+  //       setError(err.response?.data?.message || 'Could not join room')
+  //     })
+
+  //   return () => {
+  //     // Clean up voice on unmount
+  //     stopVoice()
+  //   }
+  // }, [roomId, user])
+// 26-03
+
+//26-03
+useEffect(() => {
+  if (!roomId || !user) return
+
+  // Fetch room details
+  getRoom(roomId)
+    .then(r => setRoomInfo(r.data.room))
+    .catch(() => {})
+
+  joinRoom(roomId)
+    .then(() => setJoined(true))
+    .catch((err) => {
+      setError(err.response?.data?.message || 'Could not join room')
+    })
+
+  return () => {
+    stopVoice()
+  }
+}, [roomId, user])
+//26-03
+
+
+  // ── Socket event listeners ────────────────────────────────────────────────
   useEffect(() => {
     if (!socket || !joined || !roomId) return
+
+    // Join the socket room
     socket.emit('join-room', { roomId })
-    socket.on('room-participants', (list) => setParticipants(list))
-    socket.on('user-joined', (userData) => {
-      setParticipants((prev) => {
-        if (prev.find((p) => p.socketId === userData.socketId)) return prev
-        return [...prev, userData]
-      })
-      addSystemMessage(`${userData.name} joined the room`)
-      if (localStreamRef.current) callPeer(userData.socketId, localStreamRef.current)
+
+    // Receive current participant list on first join
+    socket.on('room-participants', (list) => {
+      setParticipants(list)
     })
+
+    // New user joined
+    //26-03
+    // socket.on('user-joined', (userData) => {
+    //   setParticipants((prev) => {
+    //     if (prev.find((p) => p.socketId === userData.socketId)) return prev
+    //     return [...prev, userData]
+    //   })
+    //   addSystemMessage(`${userData.name} joined the room`)
+    // })
+    //26-03//
+
+    //26-03//
+
+    socket.on('user-joined', (userData) => {
+  setParticipants((prev) => {
+    if (prev.find((p) => p.socketId === userData.socketId)) return prev
+    return [...prev, userData]
+  })
+  addSystemMessage(`${userData.name} joined the room`)
+
+  // If we are in voice, call the new user immediately
+  if (localStreamRef.current) {
+    callPeer(userData.socketId, localStreamRef.current)
+  }
+})
+
+    //26-03//
+    // User left
     socket.on('user-left', ({ socketId, name }) => {
       setParticipants((prev) => prev.filter((p) => p.socketId !== socketId))
       closePeer(socketId)
       addSystemMessage(`${name} left the room`)
     })
+
+    // Incoming chat message
     socket.on('chat-message', (msg) => {
       setMessages((prev) => [...prev, { ...msg, type: 'chat' }])
     })
+
+    // Mute state changes
     socket.on('user-mute-changed', ({ socketId, isMuted }) => {
-      setParticipants((prev) => prev.map((p) => p.socketId === socketId ? { ...p, isMuted } : p))
+      setParticipants((prev) =>
+        prev.map((p) => (p.socketId === socketId ? { ...p, isMuted } : p))
+      )
     })
+
+    // Speaking indicator
     socket.on('user-speaking', ({ socketId, isSpeaking }) => {
-      setParticipants((prev) => prev.map((p) => p.socketId === socketId ? { ...p, isSpeaking } : p))
+      setParticipants((prev) =>
+        prev.map((p) => (p.socketId === socketId ? { ...p, isSpeaking } : p))
+      )
     })
+
+    // Typing indicator
     socket.on('user-typing', ({ userId, name, isTyping }) => {
       if (userId === user.id) return
       setTypingUsers((prev) =>
-        isTyping ? (prev.includes(name) ? prev : [...prev, name]) : prev.filter((n) => n !== name)
+        isTyping
+          ? prev.includes(name) ? prev : [...prev, name]
+          : prev.filter((n) => n !== name)
       )
     })
-    socket.on('room-closed', ({ message }) => {
-      alert(message)
-      navigate('/room')
-    })
+
+    // ── WebRTC Signaling ────────────────────────────────────────────────────
     socket.on('webrtc-offer', async ({ from, offer }) => {
       if (!localStreamRef.current) return
       const pc = createPeer(from)
@@ -161,14 +255,17 @@ const RoomLive = () => {
       await pc.setLocalDescription(answer)
       socket.emit('webrtc-answer', { to: from, answer })
     })
+
     socket.on('webrtc-answer', async ({ from, answer }) => {
       const pc = peersRef.current[from]
       if (pc) await pc.setRemoteDescription(new RTCSessionDescription(answer))
     })
+
     socket.on('webrtc-ice-candidate', ({ from, candidate }) => {
       const pc = peersRef.current[from]
       if (pc && candidate) pc.addIceCandidate(new RTCIceCandidate(candidate))
     })
+
     return () => {
       socket.emit('leave-room', { roomId })
       socket.off('room-participants')
@@ -178,20 +275,23 @@ const RoomLive = () => {
       socket.off('user-mute-changed')
       socket.off('user-speaking')
       socket.off('user-typing')
-      socket.off('room-closed')
       socket.off('webrtc-offer')
       socket.off('webrtc-answer')
       socket.off('webrtc-ice-candidate')
     }
   }, [socket, joined, roomId])
 
+  // ── Helper: system message ────────────────────────────────────────────────
   const addSystemMessage = (text) => {
     setMessages((prev) => [...prev, {
-      id: Date.now(), type: 'system', message: text,
+      id: Date.now(),
+      type: 'system',
+      message: text,
       timestamp: new Date().toISOString(),
     }])
   }
 
+  // ── Send chat message ─────────────────────────────────────────────────────
   const sendMessage = () => {
     if (!inputMsg.trim() || !socket) return
     socket.emit('chat-message', { roomId, message: inputMsg })
@@ -216,26 +316,49 @@ const RoomLive = () => {
     }, 1500)
   }
 
+  // ── Toggle mute ───────────────────────────────────────────────────────────
   const toggleMute = () => {
     const newMuted = !isMuted
     setIsMuted(newMuted)
+
+    // Mute actual audio track
     if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach((t) => { t.enabled = !newMuted })
+      localStreamRef.current.getAudioTracks().forEach((t) => {
+        t.enabled = !newMuted
+      })
     }
+
     socket?.emit('toggle-mute', { roomId, isMuted: newMuted })
   }
 
+  // ── WebRTC: get microphone & call all existing participants ───────────────
   const startVoice = async () => {
     try {
+      //26/03
+      // const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      //26/03
+      // 26/03
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, sampleRate: 48000 },
-        video: false,
-      })
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    sampleRate: 48000,
+  },
+  video: false
+})
+//26-03
       localStreamRef.current = stream
       setVoiceEnabled(true)
+
+      // Set up voice activity detection
       setupVoiceActivityDetection(stream)
+
+      // Call every existing participant
       participants.forEach((p) => {
-        if (p.socketId !== socket?.id) callPeer(p.socketId, stream)
+        if (p.socketId !== socket?.id) {
+          callPeer(p.socketId, stream)
+        }
       })
     } catch (err) {
       alert('Microphone access denied. Please allow mic access to use voice chat.')
@@ -247,36 +370,57 @@ const RoomLive = () => {
       localStreamRef.current.getTracks().forEach((t) => t.stop())
       localStreamRef.current = null
     }
+    // Close all peer connections
     Object.keys(peersRef.current).forEach(closePeer)
     setVoiceEnabled(false)
   }
 
+  // ── Create RTCPeerConnection ──────────────────────────────────────────────
   const createPeer = (remoteSocketId) => {
     const pc = new RTCPeerConnection(rtcConfig)
     peersRef.current[remoteSocketId] = pc
+
+    // Add local tracks
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current))
     }
+
+    // Send ICE candidates to the remote peer via socket
     pc.onicecandidate = (e) => {
-      if (e.candidate) socket?.emit('webrtc-ice-candidate', { to: remoteSocketId, candidate: e.candidate })
+      if (e.candidate) {
+        socket?.emit('webrtc-ice-candidate', { to: remoteSocketId, candidate: e.candidate })
+      }
     }
+
+    // Play remote audio when track received
     pc.ontrack = (e) => {
       const audio = new Audio()
       audio.srcObject = e.streams[0]
       audio.autoplay = true
       audio.id = `audio-${remoteSocketId}`
+      // Replace if already exists
       const existing = document.getElementById(`audio-${remoteSocketId}`)
       if (existing) existing.remove()
       document.body.appendChild(audio)
     }
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed') pc.restartIce()
-    }
+
+
+    //26-03
+    // Restart ICE if connection fails
+pc.onconnectionstatechange = () => {
+  console.log(`Peer ${remoteSocketId} state:`, pc.connectionState)
+  if (pc.connectionState === 'failed') {
+    console.log('Connection failed, restarting ICE...')
+    pc.restartIce()
+  }
+}
+
+    //26-03
+
     return pc
   }
 
   const callPeer = async (remoteSocketId, stream) => {
-    if (peersRef.current[remoteSocketId]) closePeer(remoteSocketId)
     const pc = createPeer(remoteSocketId)
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
@@ -285,11 +429,15 @@ const RoomLive = () => {
 
   const closePeer = (socketId) => {
     const pc = peersRef.current[socketId]
-    if (pc) { pc.close(); delete peersRef.current[socketId] }
+    if (pc) {
+      pc.close()
+      delete peersRef.current[socketId]
+    }
     const audio = document.getElementById(`audio-${socketId}`)
     if (audio) audio.remove()
   }
 
+  // ── Voice activity detection (speaking indicator) ─────────────────────────
   const setupVoiceActivityDetection = (stream) => {
     try {
       const ctx = new AudioContext()
@@ -297,13 +445,16 @@ const RoomLive = () => {
       const src = ctx.createMediaStreamSource(stream)
       src.connect(analyser)
       analyser.fftSize = 512
+
       const data = new Uint8Array(analyser.frequencyBinCount)
       let speakingState = false
+
       const check = () => {
         if (!localStreamRef.current) return
         analyser.getByteFrequencyData(data)
         const avg = data.reduce((a, b) => a + b, 0) / data.length
         const nowSpeaking = avg > 20
+
         if (nowSpeaking !== speakingState) {
           speakingState = nowSpeaking
           socket?.emit('speaking', { roomId, isSpeaking: nowSpeaking })
@@ -311,163 +462,192 @@ const RoomLive = () => {
         requestAnimationFrame(check)
       }
       check()
-    } catch (e) {}
+    } catch (e) {
+      // AudioContext not supported, skip
+    }
   }
 
+  // ── Leave room ────────────────────────────────────────────────────────────
   const leaveRoom = async () => {
     stopVoice()
     const durationMin = Math.round((Date.now() - sessionStart) / 60000)
     if (durationMin >= 1) {
       await completeSession({ room_id: roomId, duration_minutes: durationMin }).catch(() => {})
     }
-    navigate('/room')
+    navigate('/rooms')
   }
 
+  // ─── Render ─────────────────────────────────────────────────────────────────
   if (error) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16, padding: 20 }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
         <div style={{ fontSize: '3rem' }}>❌</div>
-        <h4 style={{ textAlign: 'center' }}>{error}</h4>
-        <button className="btn-primary-sc" onClick={() => navigate('/room')}>Back to Rooms</button>
+        <h4>{error}</h4>
+        <button className="btn-primary-sc" onClick={() => navigate('/rooms')}>Back to Rooms</button>
       </div>
     )
   }
 
-  const totalParticipants = participants.filter(p => p.userId !== user?.id).length + 1
-
   return (
-    <>
-      <style>{`
-        .room-layout { height: 100dvh; display: flex; flex-direction: column; background: #f8fafc; overflow: hidden; }
-        .room-topbar { background: linear-gradient(135deg,#0f172a,#1e3a5f); padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; gap: 8px; }
-        .room-body { flex: 1; display: flex; overflow: hidden; position: relative; }
-        .participants-panel { width: 200px; flex-shrink: 0; border-right: 1px solid #e2e8f0; background: #fff; padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-        .chat-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-        .chat-messages { flex: 1; overflow-y: auto; padding: 12px 14px; -webkit-overflow-scrolling: touch; }
-        .chat-input-bar { padding: 10px 12px; border-top: 1px solid #e2e8f0; background: #fff; display: flex; gap: 8px; align-items: flex-end; }
-        .topbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
-        .topbar-right { display: flex; gap: 6px; flex-shrink: 0; }
-        .btn-bar { padding: 6px 10px; border-radius: 8px; border: none; cursor: pointer; font-size: 12px; font-weight: 600; color: #fff; white-space: nowrap; }
-        .room-title { color: #fff; font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
-        .room-topic { color: rgba(255,255,255,0.5); font-size: 10px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
-        .participants-toggle { display: none; }
-        .mobile-drawer-overlay { display: none; }
-        @media (max-width: 640px) {
-          .participants-panel { display: none !important; }
-          .participants-toggle { display: flex !important; align-items: center; gap: 4px; }
-          .mobile-drawer-overlay { display: block; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; }
-          .mobile-drawer-inner { position: absolute; bottom: 0; left: 0; right: 0; background: #fff; border-radius: 20px 20px 0 0; padding: 16px; max-height: 60vh; overflow-y: auto; }
-          .room-title { max-width: 100px; font-size: 12px; }
-          .btn-bar { padding: 5px 8px; font-size: 11px; }
-          .chat-messages { padding: 8px 10px; }
-        }
-      `}</style>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f8fafc' }}>
 
-      <div className="room-layout">
-        {/* Top bar */}
-        <div className="room-topbar">
-          <div className="topbar-left">
-            <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: connected ? '#22c55e' : '#ef4444', boxShadow: connected ? '0 0 0 2px rgba(34,197,94,0.3)' : 'none' }} />
-            <div style={{ minWidth: 0 }}>
-              <div className="room-title">{roomInfo ? roomInfo.title : `Room #${roomId}`}</div>
-              {roomInfo && <div className="room-topic">{roomInfo.topic}</div>}
-            </div>
-            {/* Mobile participants button */}
-            <button className="participants-toggle btn-bar" onClick={() => setShowParticipants(true)} style={{ background: 'rgba(255,255,255,0.15)' }}>
-              👥 {totalParticipants}
-            </button>
-            {/* Desktop count */}
-            <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, whiteSpace: 'nowrap' }} className="hide-mobile">
-              {totalParticipants} participant{totalParticipants !== 1 ? 's' : ''}
-            </span>
+      {/* ── Top Bar ──────────────────────────────────────────────────────── */}
+      <div style={{
+        background: 'linear-gradient(135deg, #0f172a, #1e3a5f)',
+        padding: '12px 20px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        flexShrink: 0,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{
+            width: 10, height: 10, borderRadius: '50%',
+            background: connected ? '#22c55e' : '#ef4444',
+            boxShadow: connected ? '0 0 0 3px rgba(34,197,94,0.3)' : 'none',
+          }} />
+          {/* 26-03 */}
+          {/* <span style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>Room #{roomId}</span> */}
+          {/* 26-03 */}
+{/* 26-03 */}
+          <div>
+  <span style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>
+    {roomInfo ? roomInfo.title : `Room #${roomId}`}
+  </span>
+  {roomInfo && (
+    <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 1 }}>
+      {roomInfo.topic}
+    </div>
+  )}
+</div>
+{/* 26-03 */}
+          {/* <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>
+            {participants.length} participant{participants.length !== 1 ? 's' : ''}
+          </span> */}
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {/* Mute button */}
+          <button
+            onClick={toggleMute}
+            style={{
+              padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              background: isMuted ? '#ef4444' : 'rgba(255,255,255,0.15)',
+              color: '#fff', fontSize: 13, fontWeight: 600,
+            }}>
+            {isMuted ? '🔇 Unmute' : '🎙️ Mute'}
+          </button>
+          {/* Voice toggle */}
+          <button
+            onClick={voiceEnabled ? stopVoice : startVoice}
+            style={{
+              padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              background: voiceEnabled ? '#6366f1' : 'rgba(255,255,255,0.15)',
+              color: '#fff', fontSize: 13, fontWeight: 600,
+            }}>
+            {voiceEnabled ? '🔊 Voice On' : '🎧 Join Voice'}
+          </button>
+          {/* Leave */}
+          <button
+            onClick={leaveRoom}
+            style={{
+              padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              background: '#ef4444', color: '#fff', fontSize: 13, fontWeight: 600,
+            }}>
+            Leave
+          </button>
+        </div>
+      </div>
+
+      {/* ── Main Body ────────────────────────────────────────────────────── */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+
+        {/* ── Left: Participants ──────────────────────────────────────────── */}
+        <div style={{
+          width: 220, flexShrink: 0, borderRight: '1px solid #e2e8f0',
+          background: '#fff', padding: 16, overflowY: 'auto',
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#94a3b8', marginBottom: 10, letterSpacing: 1 }}>
+            PARTICIPANTS ({participants.length})
           </div>
-          <div className="topbar-right">
-            <button className="btn-bar" onClick={toggleMute} style={{ background: isMuted ? '#ef4444' : 'rgba(255,255,255,0.15)' }}>
-              {isMuted ? '🔇' : '🎙️'}
-            </button>
-            <button className="btn-bar" onClick={voiceEnabled ? stopVoice : startVoice} style={{ background: voiceEnabled ? '#6366f1' : 'rgba(255,255,255,0.15)' }}>
-              {voiceEnabled ? '🔊' : '🎧'}
-            </button>
-            <button className="btn-bar" onClick={leaveRoom} style={{ background: '#ef4444' }}>Leave</button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {/* Self */}
+            <ParticipantCard
+              p={{ name: user?.name, isMuted, isSpeaking: false, socketId: socket?.id }}
+              isMe
+            />
+            {/* Others */}
+            {participants
+              .filter((p) => p.userId !== user?.id)
+              .map((p) => (
+                <ParticipantCard key={p.socketId} p={p} isMe={false} />
+              ))}
           </div>
         </div>
 
-        {/* Body */}
-        <div className="room-body">
-          {/* Desktop participants */}
-          <div className="participants-panel">
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', marginBottom: 6, letterSpacing: 1 }}>
-              PARTICIPANTS ({totalParticipants})
-            </div>
-            <ParticipantCard p={{ name: user?.name, isMuted, isSpeaking: false, socketId: socket?.id }} isMe />
-            {participants.filter((p) => p.userId !== user?.id).map((p) => (
-              <ParticipantCard key={p.socketId} p={p} isMe={false} />
-            ))}
+        {/* ── Right: Chat ─────────────────────────────────────────────────── */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+          {/* Messages */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+            {messages.length === 0 && (
+              <div style={{ textAlign: 'center', color: '#94a3b8', marginTop: 40 }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: 8 }}>💬</div>
+                <p>No messages yet. Say hello!</p>
+              </div>
+            )}
+            {messages.map((msg) =>
+              msg.type === 'system' ? (
+                <div key={msg.id} style={{
+                  textAlign: 'center', fontSize: 12, color: '#94a3b8',
+                  margin: '8px 0', padding: '4px 12px', background: '#f1f5f9',
+                  borderRadius: 20, display: 'inline-block', width: '100%',
+                }}>
+                  {msg.message}
+                </div>
+              ) : (
+                <ChatMessage key={msg.id} msg={msg} isMe={msg.userId === user?.id} />
+              )
+            )}
+            {/* Typing indicator */}
+            {typingUsers.length > 0 && (
+              <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>
+                {typingUsers.join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing...
+              </div>
+            )}
+            <div ref={messagesEndRef} />
           </div>
 
-          {/* Mobile drawer */}
-          {showParticipants && (
-            <div className="mobile-drawer-overlay" onClick={() => setShowParticipants(false)}>
-              <div className="mobile-drawer-inner" onClick={e => e.stopPropagation()}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <span style={{ fontWeight: 700, fontSize: 15 }}>Participants ({totalParticipants})</span>
-                  <button onClick={() => setShowParticipants(false)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' }}>×</button>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <ParticipantCard p={{ name: user?.name, isMuted, isSpeaking: false, socketId: socket?.id }} isMe />
-                  {participants.filter((p) => p.userId !== user?.id).map((p) => (
-                    <ParticipantCard key={p.socketId} p={p} isMe={false} />
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Chat */}
-          <div className="chat-panel">
-            <div className="chat-messages">
-              {messages.length === 0 && (
-                <div style={{ textAlign: 'center', color: '#94a3b8', marginTop: 40 }}>
-                  <div style={{ fontSize: '2rem', marginBottom: 8 }}>💬</div>
-                  <p style={{ fontSize: 13 }}>No messages yet. Say hello!</p>
-                </div>
-              )}
-              {messages.map((msg) =>
-                msg.type === 'system' ? (
-                  <div key={msg.id} style={{ textAlign: 'center', fontSize: 11, color: '#94a3b8', margin: '6px 0', padding: '3px 10px', background: '#f1f5f9', borderRadius: 20, display: 'inline-block', width: '100%' }}>
-                    {msg.message}
-                  </div>
-                ) : (
-                  <ChatMessage key={msg.id} msg={msg} isMe={msg.userId === user?.id} />
-                )
-              )}
-              {typingUsers.length > 0 && (
-                <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 6 }}>
-                  {typingUsers.join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing...
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-            <div className="chat-input-bar">
-              <textarea
-                value={inputMsg}
-                onChange={handleTyping}
-                onKeyDown={handleInputKeyDown}
-                placeholder="Type a message..."
-                rows={1}
-                style={{ flex: 1, resize: 'none', border: '1.5px solid #e2e8f0', borderRadius: 10, padding: '9px 12px', fontSize: 14, fontFamily: 'inherit', outline: 'none', lineHeight: 1.5, maxHeight: 80, overflowY: 'auto' }}
-              />
-              <button
-                onClick={sendMessage}
-                disabled={!inputMsg.trim()}
-                style={{ padding: '9px 14px', borderRadius: 10, border: 'none', cursor: 'pointer', background: inputMsg.trim() ? 'linear-gradient(135deg,#6366f1,#a855f7)' : '#e2e8f0', color: inputMsg.trim() ? '#fff' : '#94a3b8', fontSize: 16, fontWeight: 700, flexShrink: 0 }}>
-                ➤
-              </button>
-            </div>
+          {/* Input bar */}
+          <div style={{
+            padding: '12px 16px', borderTop: '1px solid #e2e8f0',
+            background: '#fff', display: 'flex', gap: 10, alignItems: 'flex-end',
+          }}>
+            <textarea
+              value={inputMsg}
+              onChange={handleTyping}
+              onKeyDown={handleInputKeyDown}
+              placeholder="Type a message... (Enter to send)"
+              rows={1}
+              style={{
+                flex: 1, resize: 'none', border: '1.5px solid #e2e8f0',
+                borderRadius: 12, padding: '10px 14px', fontSize: 14,
+                fontFamily: 'inherit', outline: 'none', lineHeight: 1.5,
+                maxHeight: 80, overflowY: 'auto',
+              }}
+            />
+            <button
+              onClick={sendMessage}
+              disabled={!inputMsg.trim()}
+              style={{
+                padding: '10px 18px', borderRadius: 12, border: 'none', cursor: 'pointer',
+                background: inputMsg.trim() ? 'linear-gradient(135deg,#6366f1,#a855f7)' : '#e2e8f0',
+                color: inputMsg.trim() ? '#fff' : '#94a3b8',
+                fontSize: 16, fontWeight: 700, transition: 'all 0.2s',
+              }}>
+              ➤
+            </button>
           </div>
         </div>
       </div>
-    </>
+    </div>
   )
 }
 
