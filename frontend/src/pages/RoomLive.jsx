@@ -377,9 +377,9 @@ const RoomLive = () => {
               👥 {totalParticipants}
             </button>
             {/* Desktop count */}
-            {/* <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, whiteSpace: 'nowrap' }} className="hide-mobile">
+            <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, whiteSpace: 'nowrap' }} className="hide-mobile">
               {totalParticipants} participant{totalParticipants !== 1 ? 's' : ''}
-            </span> */}
+            </span>
           </div>
           <div className="topbar-right">
             <button className="btn-bar" onClick={toggleMute} style={{ background: isMuted ? '#ef4444' : 'rgba(255,255,255,0.15)' }}>
