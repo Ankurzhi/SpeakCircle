@@ -1,16 +1,20 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useSocket } from '../context/SocketContext'
+// 26-03
+// import { joinRoom, completeSession } from '../services/api'
+// 26-03
+//26-03
 import { joinRoom, completeSession, getRoom } from '../services/api'
+//26-03
+
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 const fmtTime = (iso) => {
   const d = new Date(iso)
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
-
-const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '👏', '🔥']
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -26,111 +30,44 @@ const ParticipantCard = ({ p, isMe }) => (
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       color: '#fff', fontWeight: 700, fontSize: 15, flexShrink: 0,
       boxShadow: p.isSpeaking ? '0 0 0 3px rgba(99,102,241,0.4)' : 'none',
-      position: 'relative',
     }}>
       {p.name?.charAt(0).toUpperCase()}
-      {p.handRaised && (
-        <span style={{
-          position: 'absolute', top: -6, right: -6, fontSize: 14,
-          animation: 'wave 0.6s infinite alternate',
-        }}>🖐</span>
-      )}
     </div>
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {p.name} {isMe && <span style={{ color: '#6366f1', fontSize: 11 }}>(you)</span>}
       </div>
       {p.isSpeaking && <div style={{ fontSize: 11, color: '#6366f1' }}>Speaking...</div>}
-      {p.handRaised && !p.isSpeaking && <div style={{ fontSize: 11, color: '#f59e0b' }}>Hand raised</div>}
     </div>
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-      <span style={{ fontSize: 14 }}>{p.isMuted ? '🔇' : '🎙️'}</span>
-    </div>
+    <span style={{ fontSize: 16 }}>{p.isMuted ? '🔇' : '🎙️'}</span>
   </div>
 )
 
-const ChatMessage = ({ msg, isMe, onReact, reactions }) => {
-  const [showPicker, setShowPicker] = useState(false)
-
-  return (
-    <div
-      style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', gap: 8, marginBottom: 12 }}
-      onMouseEnter={() => setShowPicker(true)}
-      onMouseLeave={() => setShowPicker(false)}
-    >
+const ChatMessage = ({ msg, isMe }) => (
+  <div style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', gap: 8, marginBottom: 12 }}>
+    <div style={{
+      width: 30, height: 30, borderRadius: '50%', background: isMe ? '#6366f1' : '#e2e8f0',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      color: isMe ? '#fff' : '#475569', fontWeight: 700, fontSize: 12, flexShrink: 0,
+    }}>
+      {msg.name?.charAt(0).toUpperCase()}
+    </div>
+    <div style={{ maxWidth: '72%' }}>
+      {!isMe && <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>{msg.name}</div>}
       <div style={{
-        width: 30, height: 30, borderRadius: '50%', background: isMe ? '#6366f1' : '#e2e8f0',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color: isMe ? '#fff' : '#475569', fontWeight: 700, fontSize: 12, flexShrink: 0,
+        padding: '8px 12px', borderRadius: isMe ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
+        background: isMe ? 'linear-gradient(135deg,#6366f1,#a855f7)' : '#f1f5f9',
+        color: isMe ? '#fff' : '#1e293b', fontSize: 14, lineHeight: 1.5,
+        wordBreak: 'break-word',
       }}>
-        {msg.name?.charAt(0).toUpperCase()}
+        {msg.message}
       </div>
-      <div style={{ maxWidth: '72%' }}>
-        {!isMe && <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>{msg.name}</div>}
-        <div style={{ position: 'relative' }}>
-          <div style={{
-            padding: '8px 12px', borderRadius: isMe ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
-            background: isMe ? 'linear-gradient(135deg,#6366f1,#a855f7)' : '#f1f5f9',
-            color: isMe ? '#fff' : '#1e293b', fontSize: 14, lineHeight: 1.5,
-            wordBreak: 'break-word',
-          }}>
-            {msg.message}
-          </div>
-
-          {/* Reaction picker */}
-          {showPicker && (
-            <div style={{
-              position: 'absolute', [isMe ? 'right' : 'left']: 0, bottom: '100%', marginBottom: 4,
-              background: '#fff', border: '1px solid #e2e8f0', borderRadius: 20,
-              padding: '4px 8px', display: 'flex', gap: 4, zIndex: 10,
-              boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
-            }}>
-              {REACTION_EMOJIS.map(emoji => (
-                <button
-                  key={emoji}
-                  onClick={() => onReact(msg.id, emoji)}
-                  style={{
-                    background: 'none', border: 'none', cursor: 'pointer',
-                    fontSize: 18, padding: '2px 3px', borderRadius: 6,
-                    transition: 'transform 0.1s',
-                  }}
-                  onMouseEnter={e => e.target.style.transform = 'scale(1.3)'}
-                  onMouseLeave={e => e.target.style.transform = 'scale(1)'}
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Reaction counts */}
-        {reactions && Object.keys(reactions).length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-            {Object.entries(reactions).map(([emoji, count]) => (
-              <span
-                key={emoji}
-                onClick={() => onReact(msg.id, emoji)}
-                style={{
-                  background: '#f1f5f9', border: '1px solid #e2e8f0',
-                  borderRadius: 12, padding: '2px 7px', fontSize: 12,
-                  cursor: 'pointer', userSelect: 'none',
-                  display: 'flex', alignItems: 'center', gap: 3,
-                }}
-              >
-                {emoji} <span style={{ fontWeight: 600 }}>{count}</span>
-              </span>
-            ))}
-          </div>
-        )}
-
-        <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2, textAlign: isMe ? 'right' : 'left' }}>
-          {fmtTime(msg.timestamp)}
-        </div>
+      <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2, textAlign: isMe ? 'right' : 'left' }}>
+        {fmtTime(msg.timestamp)}
       </div>
     </div>
-  )
-}
+  </div>
+)
 
 // ─── Main RoomLive Component ──────────────────────────────────────────────────
 const RoomLive = () => {
@@ -142,7 +79,6 @@ const RoomLive = () => {
   // State
   const [participants, setParticipants] = useState([])
   const [messages, setMessages] = useState([])
-  const [messageReactions, setMessageReactions] = useState({}) // { msgId: { emoji: count } }
   const [inputMsg, setInputMsg] = useState('')
   const [isMuted, setIsMuted] = useState(false)
   const [typingUsers, setTypingUsers] = useState([])
@@ -150,40 +86,43 @@ const RoomLive = () => {
   const [error, setError] = useState(null)
   const [joined, setJoined] = useState(false)
   const [voiceEnabled, setVoiceEnabled] = useState(false)
-  const [roomInfo, setRoomInfo] = useState(null)
-  const [handRaised, setHandRaised] = useState(false)
+  const [roomInfo, setRoomInfo] = useState(null)//26-03
 
   // Refs
   const messagesEndRef = useRef(null)
   const typingTimeout = useRef(null)
   const localStreamRef = useRef(null)
-  const peersRef = useRef({})
-  // ✅ FIX: Keep a live ref of participants to avoid stale closures in async callbacks
-  const participantsRef = useRef([])
+  const peersRef = useRef({}) // socketId -> RTCPeerConnection
 
-  // Keep participantsRef in sync with state
-  useEffect(() => {
-    participantsRef.current = participants
-  }, [participants])
+  // WebRTC config (STUN for NAT traversal)
+  //28/03
+  // const rtcConfig = {
+  //   iceServers: [
+  //     { urls: 'stun:stun.l.google.com:19302' },
+  //     { urls: 'stun:stun1.l.google.com:19302' },
+  //   ],
+  // }
+  //28/03
 
-  // WebRTC config
+  //28/03
   const rtcConfig = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      {
-        urls: [
-          'turn:a.relay.metered.ca:80',
-          'turn:a.relay.metered.ca:443',
-          'turn:a.relay.metered.ca:443?transport=tcp',
-        ],
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
-    ],
-    iceTransportPolicy: 'all',
-    iceCandidatePoolSize: 10,
-  }
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: [
+        'turn:a.relay.metered.ca:80',
+        'turn:a.relay.metered.ca:443',
+        'turn:a.relay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ],
+  iceCandidatePoolSize: 10,
+}
+   //28/03
+
 
   // ── Scroll to bottom on new message ──────────────────────────────────────
   useEffect(() => {
@@ -191,70 +130,113 @@ const RoomLive = () => {
   }, [messages])
 
   // ── Join room via REST then socket ────────────────────────────────────────
-  useEffect(() => {
-    if (!roomId || !user) return
+  // 26-03
+  // useEffect(() => {
+  //   if (!roomId || !user) return
 
-    getRoom(roomId)
-      .then(r => setRoomInfo(r.data.room))
-      .catch(() => {})
+  //   joinRoom(roomId)
+  //     .then(() => {
+  //       setJoined(true)
+  //     })
+  //     .catch((err) => {
+  //       setError(err.response?.data?.message || 'Could not join room')
+  //     })
 
-    joinRoom(roomId)
-      .then(() => setJoined(true))
-      .catch((err) => {
-        setError(err.response?.data?.message || 'Could not join room')
-      })
+  //   return () => {
+  //     // Clean up voice on unmount
+  //     stopVoice()
+  //   }
+  // }, [roomId, user])
+// 26-03
 
-    return () => {
-      stopVoice()
-    }
-  }, [roomId, user])
+//26-03
+useEffect(() => {
+  if (!roomId || !user) return
+
+  // Fetch room details
+  getRoom(roomId)
+    .then(r => setRoomInfo(r.data.room))
+    .catch(() => {})
+
+  joinRoom(roomId)
+    .then(() => setJoined(true))
+    .catch((err) => {
+      setError(err.response?.data?.message || 'Could not join room')
+    })
+
+  return () => {
+    stopVoice()
+  }
+}, [roomId, user])
+//26-03
+
 
   // ── Socket event listeners ────────────────────────────────────────────────
   useEffect(() => {
     if (!socket || !joined || !roomId) return
 
+    // Join the socket room
     socket.emit('join-room', { roomId })
 
+    // Receive current participant list on first join
     socket.on('room-participants', (list) => {
       setParticipants(list)
     })
 
+    // New user joined
+    //26-03
+    // socket.on('user-joined', (userData) => {
+    //   setParticipants((prev) => {
+    //     if (prev.find((p) => p.socketId === userData.socketId)) return prev
+    //     return [...prev, userData]
+    //   })
+    //   addSystemMessage(`${userData.name} joined the room`)
+    // })
+    //26-03//
+
+    //26-03//
+
     socket.on('user-joined', (userData) => {
-      setParticipants((prev) => {
-        if (prev.find((p) => p.socketId === userData.socketId)) return prev
-        return [...prev, userData]
-      })
-      addSystemMessage(`${userData.name} joined the room`)
+  setParticipants((prev) => {
+    if (prev.find((p) => p.socketId === userData.socketId)) return prev
+    return [...prev, userData]
+  })
+  addSystemMessage(`${userData.name} joined the room`)
 
-      // ✅ FIX: Add 500ms delay so the new peer's socket is fully ready before
-      //         sending a WebRTC offer. This ensures 3+ person calls work reliably.
-      if (localStreamRef.current) {
-        setTimeout(() => callPeer(userData.socketId, localStreamRef.current), 500)
-      }
-    })
+  // If we are in voice, call the new user immediately
+  if (localStreamRef.current) {
+    callPeer(userData.socketId, localStreamRef.current)
+  }
+})
 
+    //26-03//
+    // User left
     socket.on('user-left', ({ socketId, name }) => {
       setParticipants((prev) => prev.filter((p) => p.socketId !== socketId))
       closePeer(socketId)
       addSystemMessage(`${name} left the room`)
     })
 
+    // Incoming chat message
     socket.on('chat-message', (msg) => {
       setMessages((prev) => [...prev, { ...msg, type: 'chat' }])
     })
 
+    // Mute state changes
     socket.on('user-mute-changed', ({ socketId, isMuted }) => {
       setParticipants((prev) =>
         prev.map((p) => (p.socketId === socketId ? { ...p, isMuted } : p))
       )
     })
 
+    // Speaking indicator
     socket.on('user-speaking', ({ socketId, isSpeaking }) => {
       setParticipants((prev) =>
         prev.map((p) => (p.socketId === socketId ? { ...p, isSpeaking } : p))
       )
     })
 
+    // Typing indicator
     socket.on('user-typing', ({ userId, name, isTyping }) => {
       if (userId === user.id) return
       setTypingUsers((prev) =>
@@ -264,49 +246,24 @@ const RoomLive = () => {
       )
     })
 
-    socket.on('user-hand-raised', ({ socketId, handRaised }) => {
-      setParticipants((prev) =>
-        prev.map((p) => (p.socketId === socketId ? { ...p, handRaised } : p))
-      )
-    })
-
-    // ✅ FIX: Reactions now update from server broadcast (not local state only)
-    socket.on('message-reaction', ({ messageId, reactions }) => {
-      setMessageReactions(prev => ({ ...prev, [messageId]: reactions }))
-    })
-
-    // ── WebRTC Signaling ──────────────────────────────────────────────────
+    // ── WebRTC Signaling ────────────────────────────────────────────────────
     socket.on('webrtc-offer', async ({ from, offer }) => {
       if (!localStreamRef.current) return
       const pc = createPeer(from)
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(offer))
-        const answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
-        socket.emit('webrtc-answer', { to: from, answer })
-      } catch (e) {
-        console.error('Error handling offer:', e)
-      }
+      await pc.setRemoteDescription(new RTCSessionDescription(offer))
+      const answer = await pc.createAnswer()
+      await pc.setLocalDescription(answer)
+      socket.emit('webrtc-answer', { to: from, answer })
     })
 
     socket.on('webrtc-answer', async ({ from, answer }) => {
       const pc = peersRef.current[from]
-      if (pc) {
-        try {
-          await pc.setRemoteDescription(new RTCSessionDescription(answer))
-        } catch (e) {
-          console.error('Error setting answer:', e)
-        }
-      }
+      if (pc) await pc.setRemoteDescription(new RTCSessionDescription(answer))
     })
 
     socket.on('webrtc-ice-candidate', ({ from, candidate }) => {
       const pc = peersRef.current[from]
-      if (pc && candidate) {
-        pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(e =>
-          console.warn('ICE candidate error:', e)
-        )
-      }
+      if (pc && candidate) pc.addIceCandidate(new RTCIceCandidate(candidate))
     })
 
     return () => {
@@ -318,8 +275,6 @@ const RoomLive = () => {
       socket.off('user-mute-changed')
       socket.off('user-speaking')
       socket.off('user-typing')
-      socket.off('user-hand-raised')
-      socket.off('message-reaction')
       socket.off('webrtc-offer')
       socket.off('webrtc-answer')
       socket.off('webrtc-ice-candidate')
@@ -365,46 +320,42 @@ const RoomLive = () => {
   const toggleMute = () => {
     const newMuted = !isMuted
     setIsMuted(newMuted)
+
+    // Mute actual audio track
     if (localStreamRef.current) {
       localStreamRef.current.getAudioTracks().forEach((t) => {
         t.enabled = !newMuted
       })
     }
+
     socket?.emit('toggle-mute', { roomId, isMuted: newMuted })
-  }
-
-  // ── Raise hand ────────────────────────────────────────────────────────────
-  const toggleHand = () => {
-    const newState = !handRaised
-    setHandRaised(newState)
-    socket?.emit('raise-hand', { roomId, handRaised: newState })
-    if (newState) addSystemMessage('You raised your hand ✋')
-  }
-
-  // ── Message reaction ──────────────────────────────────────────────────────
-  const handleReact = (messageId, emoji) => {
-    socket?.emit('message-reaction', { roomId, messageId, emoji })
   }
 
   // ── WebRTC: get microphone & call all existing participants ───────────────
   const startVoice = async () => {
     try {
+      //26/03
+      // const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      //26/03
+      // 26/03
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 48000,
-        },
-        video: false,
-      })
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    sampleRate: 48000,
+  },
+  video: false
+})
+//26-03
       localStreamRef.current = stream
       setVoiceEnabled(true)
+
+      // Set up voice activity detection
       setupVoiceActivityDetection(stream)
 
-      // ✅ FIX: Use participantsRef (not stale `participants` from closure)
-      //         This ensures we call ALL current participants when joining voice mid-session
-      participantsRef.current.forEach((p) => {
+      // Call every existing participant
+      participants.forEach((p) => {
         if (p.socketId !== socket?.id) {
           callPeer(p.socketId, stream)
         }
@@ -419,59 +370,61 @@ const RoomLive = () => {
       localStreamRef.current.getTracks().forEach((t) => t.stop())
       localStreamRef.current = null
     }
+    // Close all peer connections
     Object.keys(peersRef.current).forEach(closePeer)
     setVoiceEnabled(false)
   }
 
   // ── Create RTCPeerConnection ──────────────────────────────────────────────
   const createPeer = (remoteSocketId) => {
-    if (peersRef.current[remoteSocketId]) {
-      peersRef.current[remoteSocketId].close()
-    }
-
     const pc = new RTCPeerConnection(rtcConfig)
     peersRef.current[remoteSocketId] = pc
 
+    // Add local tracks
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current))
     }
 
+    // Send ICE candidates to the remote peer via socket
     pc.onicecandidate = (e) => {
       if (e.candidate) {
         socket?.emit('webrtc-ice-candidate', { to: remoteSocketId, candidate: e.candidate })
       }
     }
 
-    pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed') {
-        console.warn('ICE failed — restarting...')
-        pc.restartIce()
-      }
-    }
-
+    // Play remote audio when track received
     pc.ontrack = (e) => {
-      const audioEl = new Audio()
-      audioEl.srcObject = e.streams[0]
-      audioEl.autoplay = true
-      audioEl.id = `audio-${remoteSocketId}`
+      const audio = new Audio()
+      audio.srcObject = e.streams[0]
+      audio.autoplay = true
+      audio.id = `audio-${remoteSocketId}`
+      // Replace if already exists
       const existing = document.getElementById(`audio-${remoteSocketId}`)
       if (existing) existing.remove()
-      document.body.appendChild(audioEl)
+      document.body.appendChild(audio)
     }
+
+
+    //26-03
+    // Restart ICE if connection fails
+pc.onconnectionstatechange = () => {
+  console.log(`Peer ${remoteSocketId} state:`, pc.connectionState)
+  if (pc.connectionState === 'failed') {
+    console.log('Connection failed, restarting ICE...')
+    pc.restartIce()
+  }
+}
+
+    //26-03
 
     return pc
   }
 
   const callPeer = async (remoteSocketId, stream) => {
-    if (!stream) return
     const pc = createPeer(remoteSocketId)
-    try {
-      const offer = await pc.createOffer()
-      await pc.setLocalDescription(offer)
-      socket?.emit('webrtc-offer', { to: remoteSocketId, offer })
-    } catch (e) {
-      console.error('Error creating offer:', e)
-    }
+    const offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+    socket?.emit('webrtc-offer', { to: remoteSocketId, offer })
   }
 
   const closePeer = (socketId) => {
@@ -484,7 +437,7 @@ const RoomLive = () => {
     if (audio) audio.remove()
   }
 
-  // ── Voice activity detection ──────────────────────────────────────────────
+  // ── Voice activity detection (speaking indicator) ─────────────────────────
   const setupVoiceActivityDetection = (stream) => {
     try {
       const ctx = new AudioContext()
@@ -510,7 +463,7 @@ const RoomLive = () => {
       }
       check()
     } catch (e) {
-      // AudioContext not supported
+      // AudioContext not supported, skip
     }
   }
 
@@ -538,13 +491,6 @@ const RoomLive = () => {
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f8fafc' }}>
 
-      <style>{`
-        @keyframes wave {
-          from { transform: rotate(-15deg); }
-          to   { transform: rotate(15deg); }
-        }
-      `}</style>
-
       {/* ── Top Bar ──────────────────────────────────────────────────────── */}
       <div style={{
         background: 'linear-gradient(135deg, #0f172a, #1e3a5f)',
@@ -552,37 +498,33 @@ const RoomLive = () => {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         flexShrink: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{
             width: 10, height: 10, borderRadius: '50%',
             background: connected ? '#22c55e' : '#ef4444',
             boxShadow: connected ? '0 0 0 3px rgba(34,197,94,0.3)' : 'none',
           }} />
+          {/* 26-03 */}
+          {/* <span style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>Room #{roomId}</span> */}
+          {/* 26-03 */}
+{/* 26-03 */}
           <div>
-            <span style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>
-              {roomInfo ? roomInfo.title : `Room #${roomId}`}
-            </span>
-            {roomInfo && (
-              <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 1 }}>
-                {roomInfo.topic}
-              </div>
-            )}
-          </div>
+  <span style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>
+    {roomInfo ? roomInfo.title : `Room #${roomId}`}
+  </span>
+  {roomInfo && (
+    <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 1 }}>
+      {roomInfo.topic}
+    </div>
+  )}
+</div>
+{/* 26-03 */}
+          {/* <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>
+            {participants.length} participant{participants.length !== 1 ? 's' : ''}
+          </span> */}
         </div>
-
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {/* Raise hand */}
-          <button
-            onClick={toggleHand}
-            style={{
-              padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
-              background: handRaised ? '#f59e0b' : 'rgba(255,255,255,0.15)',
-              color: '#fff', fontSize: 13, fontWeight: 600,
-            }}>
-            {handRaised ? '✋ Lower Hand' : '🖐 Raise Hand'}
-          </button>
-
-          {/* Mute */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {/* Mute button */}
           <button
             onClick={toggleMute}
             style={{
@@ -592,7 +534,6 @@ const RoomLive = () => {
             }}>
             {isMuted ? '🔇 Unmute' : '🎙️ Mute'}
           </button>
-
           {/* Voice toggle */}
           <button
             onClick={voiceEnabled ? stopVoice : startVoice}
@@ -603,7 +544,6 @@ const RoomLive = () => {
             }}>
             {voiceEnabled ? '🔊 Voice On' : '🎧 Join Voice'}
           </button>
-
           {/* Leave */}
           <button
             onClick={leaveRoom}
@@ -625,18 +565,12 @@ const RoomLive = () => {
           background: '#fff', padding: 16, overflowY: 'auto',
         }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#94a3b8', marginBottom: 10, letterSpacing: 1 }}>
-            PARTICIPANTS ({participants.length + 1})
+            PARTICIPANTS ({participants.length})
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {/* Self */}
             <ParticipantCard
-              p={{
-                name: user?.name,
-                isMuted,
-                isSpeaking: false,
-                socketId: socket?.id,
-                handRaised,
-              }}
+              p={{ name: user?.name, isMuted, isSpeaking: false, socketId: socket?.id }}
               isMe
             />
             {/* Others */}
@@ -669,15 +603,10 @@ const RoomLive = () => {
                   {msg.message}
                 </div>
               ) : (
-                <ChatMessage
-                  key={msg.id}
-                  msg={msg}
-                  isMe={msg.userId === user?.id}
-                  onReact={handleReact}
-                  reactions={messageReactions[msg.id]}
-                />
+                <ChatMessage key={msg.id} msg={msg} isMe={msg.userId === user?.id} />
               )
             )}
+            {/* Typing indicator */}
             {typingUsers.length > 0 && (
               <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>
                 {typingUsers.join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing...

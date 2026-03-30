@@ -1,3 +1,42 @@
+// const express = require('express');
+// const cors = require('cors');
+// require('dotenv').config();
+
+// const app = express();
+
+// // Middleware
+// app.use(cors({
+//   origin: process.env.CLIENT_URL || 'http://localhost:5173',
+//   credentials: true
+// }));
+// app.use(express.json());
+// app.use(express.urlencoded({ extended: true }));
+
+// // Routes
+// app.use('/api/auth', require('./routes/auth'));
+// app.use('/api/rooms', require('./routes/rooms'));
+// app.use('/api', require('./routes/general'));
+
+// // Health check
+// app.get('/api/health', (req, res) => {
+//   res.json({ status: 'ok', message: 'SpeakCircle API is running 🎤' });
+// });
+
+// // 404 handler
+// app.use((req, res) => {
+//   res.status(404).json({ success: false, message: 'Route not found' });
+// });
+
+// // Error handler
+// app.use((err, req, res, next) => {
+//   console.error(err.stack);
+//   res.status(500).json({ success: false, message: 'Internal server error' });
+// });
+
+// const PORT = process.env.PORT || 5000;
+// app.listen(PORT, () => {
+//   console.log(`🚀 SpeakCircle server running on port ${PORT}`);
+// });
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -5,9 +44,28 @@ const { Server } = require('socket.io');
 require('dotenv').config();
 
 const app = express();
-const server = http.createServer(app);
+const server = http.createServer(app); // Wrap express in http server
 
 // ─── Socket.IO Setup ────────────────────────────────────────────────────────
+// const io = new Server(server, {
+//   cors: {
+//     origin: process.env.CLIENT_URL || 'http://localhost:5173',
+//     methods: ['GET', 'POST'],
+//     credentials: true,
+//   },
+//   pingTimeout: 60000,       // 60s before declaring client disconnected
+//   pingInterval: 25000,      // Send ping every 25s
+//   transports: ['websocket', 'polling'], // Try websocket first, fall back to polling
+// });
+// const io = new Server(server, {
+//   cors: {
+//     origin: [
+//       'http://localhost:5173',
+//       process.env.CLIENT_URL,
+//     ].filter(Boolean),
+//     credentials: true,
+//   },
+// });
 const io = new Server(server, {
   cors: {
     origin: [
@@ -19,11 +77,9 @@ const io = new Server(server, {
   },
 });
 
-// ─── In-memory room state ────────────────────────────────────────────────────
-// roomUsers[roomId]     = Map<socketId, { userId, name, isMuted, isSpeaking, ... }>
-// roomReactions[roomId] = { [messageId]: { [emoji]: count } }
+// ─── In-memory room state (fast, no DB round-trips for chat/mic) ─────────────
+// roomUsers[roomId] = Map<socketId, { userId, name, avatar, isMuted, isSpeaking }>
 const roomUsers = {};
-const roomReactions = {}; // ✅ NEW: stores reaction counts per message per room
 
 // ─── Socket.IO Authentication Middleware ─────────────────────────────────────
 const jwt = require('jsonwebtoken');
@@ -32,7 +88,7 @@ io.use((socket, next) => {
   if (!token) return next(new Error('Authentication error: no token'));
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    socket.user = decoded;
+    socket.user = decoded; // attach user info to socket
     next();
   } catch (err) {
     next(new Error('Authentication error: invalid token'));
@@ -49,8 +105,8 @@ io.on('connection', (socket) => {
 
     socket.join(roomId);
 
+    // Initialize room map if needed
     if (!roomUsers[roomId]) roomUsers[roomId] = new Map();
-    if (!roomReactions[roomId]) roomReactions[roomId] = {}; // ✅ init reactions store
 
     const userData = {
       userId: socket.user.id,
@@ -62,9 +118,12 @@ io.on('connection', (socket) => {
     };
 
     roomUsers[roomId].set(socket.id, userData);
-    socket.currentRoom = roomId;
+    socket.currentRoom = roomId; // track for cleanup on disconnect
 
+    // Tell everyone else in the room that a new user joined
     socket.to(roomId).emit('user-joined', userData);
+
+    // Send the new user the current participant list
     socket.emit('room-participants', Array.from(roomUsers[roomId].values()));
 
     console.log(`👤 ${socket.user.name} joined room ${roomId}`);
@@ -83,32 +142,12 @@ io.on('connection', (socket) => {
       id: `${socket.id}-${Date.now()}`,
       userId: socket.user.id,
       name: socket.user.name,
-      message: message.trim().slice(0, 500),
+      message: message.trim().slice(0, 500), // limit to 500 chars
       timestamp: new Date().toISOString(),
     };
 
+    // Broadcast to EVERYONE in room (including sender)
     io.to(roomId).emit('chat-message', payload);
-  });
-
-  // ── MESSAGE REACTION ─────────────────────────────────────────────────────
-  // ✅ NEW: This was missing — without this, reactions only updated locally
-  //         and were never broadcast to other users in the room.
-  socket.on('message-reaction', ({ roomId, messageId, emoji }) => {
-    if (!roomId || !messageId || !emoji) return;
-
-    // Init nested objects if needed
-    if (!roomReactions[roomId]) roomReactions[roomId] = {};
-    if (!roomReactions[roomId][messageId]) roomReactions[roomId][messageId] = {};
-
-    const reactions = roomReactions[roomId][messageId];
-    reactions[emoji] = (reactions[emoji] || 0) + 1;
-
-    // Broadcast updated reaction counts to EVERYONE in room (including sender)
-    io.to(roomId).emit('message-reaction', {
-      messageId,
-      emoji,
-      reactions: { ...reactions },
-    });
   });
 
   // ── MIC TOGGLE ───────────────────────────────────────────────────────────
@@ -150,22 +189,8 @@ io.on('connection', (socket) => {
     });
   });
 
-  // ── RAISE HAND ────────────────────────────────────────────────────────────
-  socket.on('raise-hand', ({ roomId, handRaised }) => {
-    if (!roomId || !roomUsers[roomId]) return;
-
-    const user = roomUsers[roomId].get(socket.id);
-    if (user) {
-      user.handRaised = handRaised;
-      socket.to(roomId).emit('user-hand-raised', {
-        socketId: socket.id,
-        userId: socket.user.id,
-        handRaised,
-      });
-    }
-  });
-
-  // ── WebRTC SIGNALING ──────────────────────────────────────────────────────
+  // ── WebRTC SIGNALING (Peer-to-Peer Voice) ─────────────────────────────────
+  // These relay WebRTC offers/answers/ICE candidates between peers
   socket.on('webrtc-offer', ({ to, offer }) => {
     io.to(to).emit('webrtc-offer', { from: socket.id, offer });
   });
@@ -194,16 +219,16 @@ function _leaveRoom(socket, roomId) {
   if (roomUsers[roomId]) {
     roomUsers[roomId].delete(socket.id);
 
+    // Notify others
     socket.to(roomId).emit('user-left', {
       socketId: socket.id,
       userId: socket.user?.id,
       name: socket.user?.name,
     });
 
-    // ✅ Clean up both roomUsers AND roomReactions when room is empty
+    // Clean up empty rooms
     if (roomUsers[roomId].size === 0) {
       delete roomUsers[roomId];
-      delete roomReactions[roomId];
     }
   }
 
@@ -211,6 +236,19 @@ function _leaveRoom(socket, roomId) {
 }
 
 // ─── Express Middleware ───────────────────────────────────────────────────────
+// app.use(cors({
+//   origin: process.env.CLIENT_URL || 'http://localhost:5173',
+//   credentials: true,
+// }));
+// app.use(express.json());
+// app.use(express.urlencoded({ extended: true }));
+// app.use(cors({
+//   origin: [
+//     'http://localhost:5173',
+//     process.env.CLIENT_URL,
+//   ].filter(Boolean),
+//   credentials: true,
+// }));
 app.use(cors({
   origin: [
     'http://localhost:5173',
@@ -222,6 +260,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+
 // ─── REST Routes ─────────────────────────────────────────────────────────────
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/rooms', require('./routes/rooms'));
@@ -230,9 +269,8 @@ app.use('/api', require('./routes/general'));
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'SpeakCircle API is running 🎤' });
 });
-
-app.get('/', (req, res) => {
-  res.send('Backend is running 🚀');
+app.get("/", (req, res) => {
+  res.send("Backend is running 🚀");
 });
 
 app.use((req, res) => {
@@ -250,3 +288,4 @@ server.listen(PORT, () => {
   console.log(`🚀 SpeakCircle server running on port ${PORT}`);
   console.log(`🔌 Socket.IO is ready for real-time connections`);
 });
+
