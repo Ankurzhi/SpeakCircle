@@ -1,27 +1,15 @@
-// const express = require('express');
-// const router = express.Router();
-// const { getRooms, createRoom, joinRoom, completeSession, closeRoom } = require('../controllers/roomController');
-// const authMiddleware = require('../middleware/auth');
-
-// router.get('/', getRooms);
-// router.post('/', authMiddleware, createRoom);
-// router.post('/:id/join', authMiddleware, joinRoom);
-// router.post('/complete-session', authMiddleware, completeSession);
-// router.patch('/:id/close', authMiddleware, closeRoom); // host ends the room
-
-// module.exports = router;
 const express = require('express');
 const router = express.Router();
-const { getRooms, createRoom, joinRoom, completeSession, closeRoom,getRoomById  } = require('../controllers/roomController');
+const { getRooms, createRoom, joinRoom, completeSession, closeRoom, getRoomById } = require('../controllers/roomController');
+const { getLiveKitToken } = require('../controllers/livekitController');
 const authMiddleware = require('../middleware/auth');
 
 router.get('/', getRooms);
 router.post('/', authMiddleware, createRoom);
-router.post('/complete-session', authMiddleware, completeSession);  // ← BEFORE /:id
+router.post('/complete-session', authMiddleware, completeSession); // must be before /:id
+router.get('/:id', getRoomById);
 router.post('/:id/join', authMiddleware, joinRoom);
 router.patch('/:id/close', authMiddleware, closeRoom);
+router.get('/:id/livekit-token', authMiddleware, getLiveKitToken); // LiveKit voice token
 
-//26-03
-router.get('/:id', getRoomById);
-//26-03
 module.exports = router;

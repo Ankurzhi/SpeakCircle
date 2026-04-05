@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useSocket } from '../context/SocketContext'
-import { joinRoom, completeSession, getRoom } from '../services/api'
+import { joinRoom, completeSession, getRoom, getLiveKitToken } from '../services/api'
+import { LiveKitRoom, RoomAudioRenderer, useLocalParticipant } from '@livekit/components-react'
+import '@livekit/components-styles'
 
 const fmtTime = (iso) => {
   const d = new Date(iso)
@@ -64,7 +66,17 @@ const ChatMessage = ({ msg, isMe }) => (
   </div>
 )
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// ── This component MUST be inside <LiveKitRoom> to use LiveKit hooks ──────────
+const LiveKitMuteSync = ({ isMuted }) => {
+  const { localParticipant } = useLocalParticipant()
+  useEffect(() => {
+    if (!localParticipant) return
+    localParticipant.setMicrophoneEnabled(!isMuted)
+  }, [isMuted, localParticipant])
+  return null
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
 const RoomLive = () => {
   const { id: roomId } = useParams()
   const navigate = useNavigate()
@@ -79,37 +91,18 @@ const RoomLive = () => {
   const [sessionStart] = useState(Date.now())
   const [error, setError] = useState(null)
   const [joined, setJoined] = useState(false)
-  const [voiceEnabled, setVoiceEnabled] = useState(false)
   const [roomInfo, setRoomInfo] = useState(null)
   const [showParticipants, setShowParticipants] = useState(false)
-  const [voiceStatus, setVoiceStatus] = useState({}) // socketId -> 'connecting'|'connected'|'failed'
+
+  // LiveKit voice state
+  const [livekitToken, setLivekitToken] = useState(null)
+  const [livekitUrl, setLivekitUrl] = useState(null)
+  const [voiceEnabled, setVoiceEnabled] = useState(false)
+  const [voiceLoading, setVoiceLoading] = useState(false)
+  const [voiceError, setVoiceError] = useState(null)
 
   const messagesEndRef = useRef(null)
   const typingTimeout = useRef(null)
-  const localStreamRef = useRef(null)
-  const peersRef = useRef({})
-  // ── ICE candidate buffer: holds candidates that arrive before remoteDescription is set
-  const iceCandidateBuffer = useRef({})
-
-  const rtcConfig = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      {
-        urls: [
-          'turn:a.relay.metered.ca:80',
-          'turn:a.relay.metered.ca:443',
-          'turn:a.relay.metered.ca:443?transport=tcp',
-        ],
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
-    ],
-    iceCandidatePoolSize: 10,
-    bundlePolicy: 'max-bundle',
-    rtcpMuxPolicy: 'require',
-  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -121,130 +114,46 @@ const RoomLive = () => {
     joinRoom(roomId)
       .then(() => setJoined(true))
       .catch((err) => setError(err.response?.data?.message || 'Could not join room'))
-    return () => stopVoice()
   }, [roomId, user])
 
-  // ── Socket listeners ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!socket || !joined || !roomId) return
 
     socket.emit('join-room', { roomId })
-
-    socket.on('room-participants', (list) => {
-      setParticipants(list)
-    })
-
-    // ── New user joined ──────────────────────────────────────────────────────
-    // When a new user joins, WE (existing user) call THEM
-    // This ensures bidirectional connections for all participants
+    socket.on('room-participants', (list) => setParticipants(list))
     socket.on('user-joined', (userData) => {
       setParticipants((prev) => {
         if (prev.find((p) => p.socketId === userData.socketId)) return prev
         return [...prev, userData]
       })
       addSystemMessage(`${userData.name} joined the room`)
-
-      // KEY FIX: If we are already in voice, call the new joiner
-      // This creates the connection FROM existing users TO new user
-      if (localStreamRef.current && userData.socketId !== socket.id) {
-        console.log(`📞 Calling new joiner: ${userData.name}`)
-        callPeer(userData.socketId)
-      }
     })
-
     socket.on('user-left', ({ socketId, name }) => {
       setParticipants((prev) => prev.filter((p) => p.socketId !== socketId))
-      closePeer(socketId)
       addSystemMessage(`${name} left the room`)
     })
-
     socket.on('chat-message', (msg) => {
       setMessages((prev) => [...prev, { ...msg, type: 'chat' }])
     })
-
     socket.on('user-mute-changed', ({ socketId, isMuted }) => {
       setParticipants((prev) => prev.map((p) =>
         p.socketId === socketId ? { ...p, isMuted } : p
       ))
     })
-
     socket.on('user-speaking', ({ socketId, isSpeaking }) => {
       setParticipants((prev) => prev.map((p) =>
         p.socketId === socketId ? { ...p, isSpeaking } : p
       ))
     })
-
     socket.on('user-typing', ({ userId, name, isTyping }) => {
       if (userId === user.id) return
       setTypingUsers((prev) =>
-        isTyping
-          ? prev.includes(name) ? prev : [...prev, name]
-          : prev.filter((n) => n !== name)
+        isTyping ? (prev.includes(name) ? prev : [...prev, name]) : prev.filter((n) => n !== name)
       )
     })
-
     socket.on('room-closed', ({ message }) => {
       alert(message)
       navigate('/room')
-    })
-
-    // ── WebRTC signaling ────────────────────────────────────────────────────
-
-    // Incoming offer — someone is calling us
-    socket.on('webrtc-offer', async ({ from, offer }) => {
-      console.log(`📨 Received offer from: ${from}`)
-      // Accept even if we are not in voice yet — we create the peer anyway
-      // so they can hear us when we join voice later
-      const pc = createPeer(from)
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(offer))
-        // Flush buffered ICE candidates that arrived before this
-        await flushIceCandidates(from)
-        const answer = await pc.createAnswer({
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: false,
-        })
-        await pc.setLocalDescription(answer)
-        socket.emit('webrtc-answer', { to: from, answer })
-        console.log(`📤 Sent answer to: ${from}`)
-      } catch (err) {
-        console.error('Error handling offer:', err)
-      }
-    })
-
-    // Incoming answer — they accepted our call
-    socket.on('webrtc-answer', async ({ from, answer }) => {
-      console.log(`📨 Received answer from: ${from}`)
-      const pc = peersRef.current[from]
-      if (pc) {
-        try {
-          await pc.setRemoteDescription(new RTCSessionDescription(answer))
-          // Flush buffered ICE candidates
-          await flushIceCandidates(from)
-        } catch (err) {
-          console.error('Error handling answer:', err)
-        }
-      }
-    })
-
-    // Incoming ICE candidate
-    socket.on('webrtc-ice-candidate', async ({ from, candidate }) => {
-      const pc = peersRef.current[from]
-      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
-        // Remote description already set — add immediately
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate))
-        } catch (err) {
-          console.error('Error adding ICE candidate:', err)
-        }
-      } else {
-        // Buffer it — remote description not set yet
-        if (!iceCandidateBuffer.current[from]) {
-          iceCandidateBuffer.current[from] = []
-        }
-        iceCandidateBuffer.current[from].push(candidate)
-        console.log(`🔖 Buffered ICE candidate from ${from}`)
-      }
     })
 
     return () => {
@@ -257,28 +166,8 @@ const RoomLive = () => {
       socket.off('user-speaking')
       socket.off('user-typing')
       socket.off('room-closed')
-      socket.off('webrtc-offer')
-      socket.off('webrtc-answer')
-      socket.off('webrtc-ice-candidate')
     }
   }, [socket, joined, roomId])
-
-  // ── Flush buffered ICE candidates after remote description is set ─────────
-  const flushIceCandidates = async (remoteSocketId) => {
-    const buffered = iceCandidateBuffer.current[remoteSocketId]
-    if (!buffered || buffered.length === 0) return
-    const pc = peersRef.current[remoteSocketId]
-    if (!pc) return
-    console.log(`🔓 Flushing ${buffered.length} buffered ICE candidates for ${remoteSocketId}`)
-    for (const candidate of buffered) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate))
-      } catch (err) {
-        console.error('Error flushing ICE candidate:', err)
-      }
-    }
-    iceCandidateBuffer.current[remoteSocketId] = []
-  }
 
   const addSystemMessage = (text) => {
     setMessages((prev) => [...prev, {
@@ -295,10 +184,7 @@ const RoomLive = () => {
   }
 
   const handleInputKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
   }
 
   const handleTyping = (e) => {
@@ -314,205 +200,30 @@ const RoomLive = () => {
   const toggleMute = () => {
     const newMuted = !isMuted
     setIsMuted(newMuted)
-    if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach((t) => { t.enabled = !newMuted })
-    }
     socket?.emit('toggle-mute', { roomId, isMuted: newMuted })
   }
 
-  // ── Start voice ────────────────────────────────────────────────────────────
   const startVoice = async () => {
+    setVoiceLoading(true)
+    setVoiceError(null)
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 48000,
-        },
-        video: false,
-      })
-      localStreamRef.current = stream
+      const res = await getLiveKitToken(roomId)
+      setLivekitToken(res.data.token)
+      setLivekitUrl(res.data.url)
       setVoiceEnabled(true)
-      setupVoiceActivityDetection(stream)
-
-      // Add our track to ALL existing peer connections
-      // (in case some connections were created before we joined voice)
-      Object.entries(peersRef.current).forEach(([socketId, pc]) => {
-        const senders = pc.getSenders()
-        const hasAudio = senders.some(s => s.track && s.track.kind === 'audio')
-        if (!hasAudio) {
-          stream.getAudioTracks().forEach(track => {
-            pc.addTrack(track, stream)
-          })
-        }
-      })
-
-      // Call every existing participant who is in voice
-      participants.forEach((p) => {
-        if (p.socketId !== socket?.id) {
-          console.log(`📞 Calling existing participant: ${p.name}`)
-          callPeer(p.socketId)
-        }
-      })
     } catch (err) {
-      console.error('Microphone error:', err)
-      alert('Microphone access denied. Please allow mic access and try again.')
+      setVoiceError('Could not connect to voice. Try again.')
+      console.error('LiveKit error:', err)
+    } finally {
+      setVoiceLoading(false)
     }
   }
 
   const stopVoice = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => t.stop())
-      localStreamRef.current = null
-    }
-    // Close all peer connections
-    Object.keys(peersRef.current).forEach(closePeer)
     setVoiceEnabled(false)
-    setVoiceStatus({})
-  }
-
-  // ── Create RTCPeerConnection ───────────────────────────────────────────────
-  const createPeer = (remoteSocketId) => {
-    // Close existing connection first if any
-    if (peersRef.current[remoteSocketId]) {
-      peersRef.current[remoteSocketId].close()
-    }
-
-    const pc = new RTCPeerConnection(rtcConfig)
-    peersRef.current[remoteSocketId] = pc
-
-    // Add local audio tracks if we are in voice
-    if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current)
-      })
-    }
-
-    // Send ICE candidates to the remote peer
-    pc.onicecandidate = (e) => {
-      if (e.candidate) {
-        socket?.emit('webrtc-ice-candidate', {
-          to: remoteSocketId,
-          candidate: e.candidate,
-        })
-      }
-    }
-
-    // When we receive remote audio — play it
-    pc.ontrack = (e) => {
-      console.log(`🎵 Received audio track from: ${remoteSocketId}`)
-      let audio = document.getElementById(`audio-${remoteSocketId}`)
-      if (!audio) {
-        audio = document.createElement('audio')
-        audio.id = `audio-${remoteSocketId}`
-        audio.autoplay = true
-        audio.volume = 1.0
-        document.body.appendChild(audio)
-      }
-      audio.srcObject = e.streams[0]
-      // Force play — needed on mobile browsers
-      audio.play().catch((err) => {
-        console.warn('Autoplay blocked, waiting for user gesture:', err)
-        const playOnce = () => {
-          audio.play().catch(console.error)
-          document.removeEventListener('click', playOnce)
-          document.removeEventListener('touchstart', playOnce)
-        }
-        document.addEventListener('click', playOnce)
-        document.addEventListener('touchstart', playOnce)
-      })
-    }
-
-    // Track connection state
-    pc.onconnectionstatechange = () => {
-      const state = pc.connectionState
-      console.log(`🔗 Peer ${remoteSocketId} state: ${state}`)
-      setVoiceStatus(prev => ({ ...prev, [remoteSocketId]: state }))
-      if (state === 'failed') {
-        console.log('Connection failed, restarting ICE...')
-        pc.restartIce()
-      }
-      if (state === 'disconnected') {
-        // Try to recover after 3 seconds
-        setTimeout(() => {
-          if (peersRef.current[remoteSocketId]?.connectionState === 'disconnected') {
-            console.log('Still disconnected, restarting ICE...')
-            pc.restartIce()
-          }
-        }, 3000)
-      }
-    }
-
-    pc.oniceconnectionstatechange = () => {
-      console.log(`🧊 ICE ${remoteSocketId}: ${pc.iceConnectionState}`)
-    }
-
-    return pc
-  }
-
-  // ── Call a peer (we send the offer) ──────────────────────────────────────
-  const callPeer = async (remoteSocketId) => {
-    console.log(`📞 Starting call to: ${remoteSocketId}`)
-    const pc = createPeer(remoteSocketId)
-    try {
-      const offer = await pc.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: false,
-      })
-      await pc.setLocalDescription(offer)
-      socket?.emit('webrtc-offer', { to: remoteSocketId, offer })
-    } catch (err) {
-      console.error('Error creating offer:', err)
-    }
-  }
-
-  const closePeer = (socketId) => {
-    const pc = peersRef.current[socketId]
-    if (pc) {
-      pc.close()
-      delete peersRef.current[socketId]
-    }
-    // Remove audio element
-    const audio = document.getElementById(`audio-${socketId}`)
-    if (audio) {
-      audio.srcObject = null
-      audio.remove()
-    }
-    // Clear buffer
-    delete iceCandidateBuffer.current[socketId]
-    setVoiceStatus(prev => {
-      const next = { ...prev }
-      delete next[socketId]
-      return next
-    })
-  }
-
-  // ── Voice activity detection ───────────────────────────────────────────────
-  const setupVoiceActivityDetection = (stream) => {
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)()
-      const analyser = ctx.createAnalyser()
-      const src = ctx.createMediaStreamSource(stream)
-      src.connect(analyser)
-      analyser.fftSize = 512
-      const data = new Uint8Array(analyser.frequencyBinCount)
-      let speakingState = false
-      const check = () => {
-        if (!localStreamRef.current) return
-        analyser.getByteFrequencyData(data)
-        const avg = data.reduce((a, b) => a + b, 0) / data.length
-        const nowSpeaking = avg > 15
-        if (nowSpeaking !== speakingState) {
-          speakingState = nowSpeaking
-          socket?.emit('speaking', { roomId, isSpeaking: nowSpeaking })
-        }
-        requestAnimationFrame(check)
-      }
-      check()
-    } catch (e) {
-      console.warn('Voice activity detection not supported:', e)
-    }
+    setLivekitToken(null)
+    setLivekitUrl(null)
+    setVoiceError(null)
   }
 
   const leaveRoom = async () => {
@@ -529,7 +240,7 @@ const RoomLive = () => {
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16, padding: 20 }}>
         <div style={{ fontSize: '3rem' }}>❌</div>
         <h4 style={{ textAlign: 'center' }}>{error}</h4>
-        <button className="btn-primary-sc" onClick={() => navigate('/room')}>Back to Rooms</button>
+        <button onClick={() => navigate('/room')}>Back to Rooms</button>
       </div>
     )
   }
@@ -550,7 +261,7 @@ const RoomLive = () => {
         .topbar-right { display: flex; gap: 6px; flex-shrink: 0; }
         .btn-bar { padding: 6px 10px; border-radius: 8px; border: none; cursor: pointer; font-size: 12px; font-weight: 600; color: #fff; white-space: nowrap; }
         .room-title { color: #fff; font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
-        .room-topic { color: rgba(255,255,255,0.5); font-size: 10px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+        .room-topic { color: rgba(255,255,255,0.5); font-size: 10px; margin-top: 1px; }
         .participants-toggle { display: none !important; }
         .mobile-drawer-overlay { display: none; }
         @media (max-width: 640px) {
@@ -560,20 +271,17 @@ const RoomLive = () => {
           .mobile-drawer-inner { position: absolute; bottom: 0; left: 0; right: 0; background: #fff; border-radius: 20px 20px 0 0; padding: 16px; max-height: 60vh; overflow-y: auto; }
           .room-title { max-width: 100px; font-size: 12px; }
           .btn-bar { padding: 5px 8px; font-size: 11px; }
-          .chat-messages { padding: 8px 10px; }
         }
       `}</style>
 
       <div className="room-layout">
-        {/* Top bar */}
         <div className="room-topbar">
           <div className="topbar-left">
-            <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: connected ? '#22c55e' : '#ef4444', boxShadow: connected ? '0 0 0 2px rgba(34,197,94,0.3)' : 'none' }} />
+            <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: connected ? '#22c55e' : '#ef4444' }} />
             <div style={{ minWidth: 0 }}>
               <div className="room-title">{roomInfo ? roomInfo.title : `Room #${roomId}`}</div>
               {roomInfo && <div className="room-topic">{roomInfo.topic}</div>}
             </div>
-            {/* Mobile participants button */}
             <button className="participants-toggle btn-bar" onClick={() => setShowParticipants(true)} style={{ background: 'rgba(255,255,255,0.15)' }}>
               👥 {totalParticipants}
             </button>
@@ -582,40 +290,43 @@ const RoomLive = () => {
             </span>
           </div>
           <div className="topbar-right">
-            <button className="btn-bar" onClick={toggleMute} style={{ background: isMuted ? '#ef4444' : 'rgba(255,255,255,0.15)' }} title={isMuted ? 'Unmute' : 'Mute'}>
-              {isMuted ? '🔇' : '🎙️'}
-            </button>
-            <button className="btn-bar" onClick={voiceEnabled ? stopVoice : startVoice} style={{ background: voiceEnabled ? '#6366f1' : 'rgba(255,255,255,0.15)' }} title={voiceEnabled ? 'Leave voice' : 'Join voice'}>
-              {voiceEnabled ? '🔊 Voice' : '🎧 Voice'}
+            {voiceEnabled && (
+              <button className="btn-bar" onClick={toggleMute}
+                style={{ background: isMuted ? '#ef4444' : 'rgba(255,255,255,0.15)' }}>
+                {isMuted ? '🔇' : '🎙️'}
+              </button>
+            )}
+            <button className="btn-bar"
+              onClick={voiceEnabled ? stopVoice : startVoice}
+              disabled={voiceLoading}
+              style={{ background: voiceEnabled ? '#6366f1' : voiceLoading ? '#64748b' : 'rgba(255,255,255,0.15)' }}>
+              {voiceLoading ? '⟳ Connecting...' : voiceEnabled ? '🔊 Voice On' : '🎧 Join Voice'}
             </button>
             <button className="btn-bar" onClick={leaveRoom} style={{ background: '#ef4444' }}>Leave</button>
           </div>
         </div>
 
-        {/* Body */}
         <div className="room-body">
-          {/* Desktop participants */}
           <div className="participants-panel">
             <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', marginBottom: 6, letterSpacing: 1 }}>
               PARTICIPANTS ({totalParticipants})
             </div>
             <ParticipantCard p={{ name: user?.name, isMuted, isSpeaking: false, socketId: socket?.id }} isMe />
             {participants.filter((p) => p.userId !== user?.id).map((p) => (
-              <div key={p.socketId}>
-                <ParticipantCard p={p} isMe={false} />
-                {/* Show connection status */}
-                {voiceEnabled && voiceStatus[p.socketId] && (
-                  <div style={{ fontSize: 10, color: voiceStatus[p.socketId] === 'connected' ? '#1D9E75' : '#f59e0b', paddingLeft: 40, marginTop: 2 }}>
-                    {voiceStatus[p.socketId] === 'connected' ? '✓ connected' :
-                     voiceStatus[p.socketId] === 'connecting' ? '⟳ connecting...' :
-                     voiceStatus[p.socketId] === 'failed' ? '✗ retrying...' : voiceStatus[p.socketId]}
-                  </div>
-                )}
-              </div>
+              <ParticipantCard key={p.socketId} p={p} isMe={false} />
             ))}
+            {voiceEnabled && (
+              <div style={{ marginTop: 8, padding: '6px 8px', background: 'rgba(99,102,241,0.1)', borderRadius: 8, fontSize: 11, color: '#6366f1', textAlign: 'center' }}>
+                🔊 Voice active
+              </div>
+            )}
+            {voiceError && (
+              <div style={{ marginTop: 8, padding: '6px 8px', background: 'rgba(239,68,68,0.1)', borderRadius: 8, fontSize: 11, color: '#ef4444', textAlign: 'center' }}>
+                {voiceError}
+              </div>
+            )}
           </div>
 
-          {/* Mobile drawer */}
           {showParticipants && (
             <div className="mobile-drawer-overlay" onClick={() => setShowParticipants(false)}>
               <div className="mobile-drawer-inner" onClick={e => e.stopPropagation()}>
@@ -633,7 +344,6 @@ const RoomLive = () => {
             </div>
           )}
 
-          {/* Chat */}
           <div className="chat-panel">
             <div className="chat-messages">
               {messages.length === 0 && (
@@ -659,7 +369,6 @@ const RoomLive = () => {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input bar */}
             <div className="chat-input-bar">
               <textarea
                 value={inputMsg}
@@ -679,6 +388,23 @@ const RoomLive = () => {
           </div>
         </div>
       </div>
+
+      {/* LiveKit handles ALL audio automatically — no UI needed */}
+      {voiceEnabled && livekitToken && livekitUrl && (
+        <LiveKitRoom
+          token={livekitToken}
+          serverUrl={livekitUrl}
+          connect={true}
+          audio={true}
+          video={false}
+          onConnected={() => addSystemMessage('Voice connected')}
+          onDisconnected={() => { setVoiceEnabled(false); setLivekitToken(null); setLivekitUrl(null) }}
+          onError={(err) => { console.error('LiveKit error:', err); setVoiceError('Voice failed. Try again.'); setVoiceEnabled(false) }}
+        >
+          <RoomAudioRenderer />
+          <LiveKitMuteSync isMuted={isMuted} />
+        </LiveKitRoom>
+      )}
     </>
   )
 }
