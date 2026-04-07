@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useSocket } from '../context/SocketContext'
 import { joinRoom, completeSession, getRoom, getLiveKitToken } from '../services/api'
-import { LiveKitRoom, RoomAudioRenderer, useLocalParticipant } from '@livekit/components-react'
+import { LiveKitRoom, RoomAudioRenderer, useLocalParticipant, useParticipants } from '@livekit/components-react'
 import '@livekit/components-styles'
 
 const fmtTime = (iso) => {
@@ -66,13 +66,34 @@ const ChatMessage = ({ msg, isMe }) => (
   </div>
 )
 
-// ── This component MUST be inside <LiveKitRoom> to use LiveKit hooks ──────────
-const LiveKitMuteSync = ({ isMuted }) => {
+// ── LiveKitSync: must be inside <LiveKitRoom> to use LiveKit hooks ────────────
+// Handles mute sync AND speaking indicators using LiveKit's built-in server-side VAD
+const LiveKitSync = ({ isMuted, onSpeakingChange, onSelfSpeaking }) => {
   const { localParticipant } = useLocalParticipant()
+  const lkParticipants = useParticipants()
+
+  // Sync mute button -> LiveKit
   useEffect(() => {
     if (!localParticipant) return
     localParticipant.setMicrophoneEnabled(!isMuted)
   }, [isMuted, localParticipant])
+
+  // Sync LiveKit speaking state -> participant cards
+  // LiveKit does server-side VAD so isSpeaking is accurate and works for everyone
+  // participant.identity = the userId string we set when generating the token
+  useEffect(() => {
+    if (!lkParticipants) return
+    const map = {}
+    lkParticipants.forEach(p => { map[String(p.identity)] = p.isSpeaking })
+    onSpeakingChange(map)
+  }, [lkParticipants.map(p => p.identity + ':' + p.isSpeaking).join(',')])
+
+  // Track your own speaking state for your card
+  useEffect(() => {
+    if (!localParticipant) return
+    onSelfSpeaking(!!localParticipant.isSpeaking)
+  }, [localParticipant?.isSpeaking])
+
   return null
 }
 
@@ -100,6 +121,13 @@ const RoomLive = () => {
   const [voiceEnabled, setVoiceEnabled] = useState(false)
   const [voiceLoading, setVoiceLoading] = useState(false)
   const [voiceError, setVoiceError] = useState(null)
+  // LiveKit speaking indicators — keyed by userId string
+  const [speakingMap, setSpeakingMap] = useState({})
+  const [isSelfSpeaking, setIsSelfSpeaking] = useState(false)
+
+  // Callbacks passed to LiveKitSync (must be stable references to avoid loop)
+  const onSpeakingChange = (map) => setSpeakingMap(map)
+  const onSelfSpeaking = (val) => setIsSelfSpeaking(val)
 
   const messagesEndRef = useRef(null)
   const typingTimeout = useRef(null)
@@ -325,9 +353,13 @@ const RoomLive = () => {
             <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', marginBottom: 6, letterSpacing: 1 }}>
               PARTICIPANTS ({totalParticipants})
             </div>
-            <ParticipantCard p={{ name: user?.name, isMuted, isSpeaking: false, socketId: socket?.id }} isMe />
+            <ParticipantCard p={{ name: user?.name, isMuted, isSpeaking: isSelfSpeaking, socketId: socket?.id }} isMe />
             {participants.map((p) => (
-              <ParticipantCard key={p.socketId} p={p} isMe={false} />
+              <ParticipantCard
+                key={p.socketId}
+                p={{ ...p, isSpeaking: !!speakingMap[String(p.userId)] }}
+                isMe={false}
+              />
             ))}
             {voiceEnabled && (
               <div style={{ marginTop: 8, padding: '6px 8px', background: 'rgba(99,102,241,0.1)', borderRadius: 8, fontSize: 11, color: '#6366f1', textAlign: 'center' }}>
@@ -349,9 +381,13 @@ const RoomLive = () => {
                   <button onClick={() => setShowParticipants(false)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' }}>×</button>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <ParticipantCard p={{ name: user?.name, isMuted, isSpeaking: false, socketId: socket?.id }} isMe />
+                  <ParticipantCard p={{ name: user?.name, isMuted, isSpeaking: isSelfSpeaking, socketId: socket?.id }} isMe />
                   {participants.map((p) => (
-                    <ParticipantCard key={p.socketId} p={p} isMe={false} />
+                    <ParticipantCard
+                      key={p.socketId}
+                      p={{ ...p, isSpeaking: !!speakingMap[String(p.userId)] }}
+                      isMe={false}
+                    />
                   ))}
                 </div>
               </div>
@@ -416,7 +452,7 @@ const RoomLive = () => {
           onError={(err) => { console.error('LiveKit error:', err); setVoiceError('Voice failed. Try again.'); setVoiceEnabled(false) }}
         >
           <RoomAudioRenderer />
-          <LiveKitMuteSync isMuted={isMuted} />
+          <LiveKitSync isMuted={isMuted} onSpeakingChange={onSpeakingChange} onSelfSpeaking={onSelfSpeaking} />
         </LiveKitRoom>
       )}
     </>
