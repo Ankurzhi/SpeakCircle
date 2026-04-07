@@ -120,17 +120,30 @@ const RoomLive = () => {
     if (!socket || !joined || !roomId) return
 
     socket.emit('join-room', { roomId })
-    socket.on('room-participants', (list) => setParticipants(list))
+    // BUG FIX 1: room-participants includes YOU — filter yourself out using
+    // loose equality (!=) because JWT id may be number but AuthContext id may be string
+    socket.on('room-participants', (list) => {
+      setParticipants(list.filter(p => p.userId != user?.id))
+    })
+
     socket.on('user-joined', (userData) => {
+      // Also guard with loose equality here
+      if (userData.userId == user?.id) return
       setParticipants((prev) => {
         if (prev.find((p) => p.socketId === userData.socketId)) return prev
         return [...prev, userData]
       })
       addSystemMessage(`${userData.name} joined the room`)
     })
+
+    // BUG FIX 2: user-left — the filter is correct, but we wrap it so it
+    // always reads the latest state even if socket is re-registered
     socket.on('user-left', ({ socketId, name }) => {
-      setParticipants((prev) => prev.filter((p) => p.socketId !== socketId))
-      addSystemMessage(`${name} left the room`)
+      setParticipants((prev) => {
+        const next = prev.filter((p) => p.socketId !== socketId)
+        return next
+      })
+      if (name) addSystemMessage(`${name} left the room`)
     })
     socket.on('chat-message', (msg) => {
       setMessages((prev) => [...prev, { ...msg, type: 'chat' }])
@@ -245,7 +258,8 @@ const RoomLive = () => {
     )
   }
 
-  const totalParticipants = participants.filter(p => p.userId !== user?.id).length + 1
+  // participants state never includes yourself (filtered on receive), so just add 1 for self
+  const totalParticipants = participants.length + 1
 
   return (
     <>
@@ -312,7 +326,7 @@ const RoomLive = () => {
               PARTICIPANTS ({totalParticipants})
             </div>
             <ParticipantCard p={{ name: user?.name, isMuted, isSpeaking: false, socketId: socket?.id }} isMe />
-            {participants.filter((p) => p.userId !== user?.id).map((p) => (
+            {participants.map((p) => (
               <ParticipantCard key={p.socketId} p={p} isMe={false} />
             ))}
             {voiceEnabled && (
@@ -336,7 +350,7 @@ const RoomLive = () => {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <ParticipantCard p={{ name: user?.name, isMuted, isSpeaking: false, socketId: socket?.id }} isMe />
-                  {participants.filter((p) => p.userId !== user?.id).map((p) => (
+                  {participants.map((p) => (
                     <ParticipantCard key={p.socketId} p={p} isMe={false} />
                   ))}
                 </div>
