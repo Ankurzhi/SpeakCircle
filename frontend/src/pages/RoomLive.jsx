@@ -116,16 +116,11 @@ const RoomLive = () => {
   const [showParticipants, setShowParticipants] = useState(false)
 
   // LiveKit voice state
-  // Single voice state object — batched updates prevent the re-render loop
-  // where onDisconnected fires multiple setState calls causing LiveKitRoom to remount
-  const [voice, setVoice] = useState({ enabled: false, token: null, url: null, loading: false, error: null })
-  // Convenience aliases so existing JSX doesn't need changing
-  const voiceEnabled = voice.enabled
-  const livekitToken = voice.token
-  const livekitUrl = voice.url
-  const voiceLoading = voice.loading
-  const voiceError = voice.error
-  const setVoiceError = (msg) => setVoice(v => ({ ...v, error: msg }))
+  const [livekitToken, setLivekitToken] = useState(null)
+  const [livekitUrl, setLivekitUrl] = useState(null)
+  const [voiceEnabled, setVoiceEnabled] = useState(false)
+  const [voiceLoading, setVoiceLoading] = useState(false)
+  const [voiceError, setVoiceError] = useState(null)
   // LiveKit speaking indicators — keyed by userId string
   const [speakingMap, setSpeakingMap] = useState({})
   const [isSelfSpeaking, setIsSelfSpeaking] = useState(false)
@@ -250,20 +245,26 @@ const RoomLive = () => {
   }
 
   const startVoice = async () => {
-    setVoice(v => ({ ...v, loading: true, error: null }))
+    setVoiceLoading(true)
+    setVoiceError(null)
     try {
       const res = await getLiveKitToken(roomId)
-      // Single atomic update — all three values set together, no intermediate renders
-      setVoice({ enabled: true, token: res.data.token, url: res.data.url, loading: false, error: null })
+      setLivekitToken(res.data.token)
+      setLivekitUrl(res.data.url)
+      setVoiceEnabled(true)
     } catch (err) {
+      setVoiceError('Could not connect to voice. Try again.')
       console.error('LiveKit error:', err)
-      setVoice(v => ({ ...v, loading: false, error: 'Could not connect to voice. Try again.' }))
+    } finally {
+      setVoiceLoading(false)
     }
   }
 
   const stopVoice = () => {
-    // Single atomic reset — prevents onDisconnected -> setState -> remount loop
-    setVoice({ enabled: false, token: null, url: null, loading: false, error: null })
+    setVoiceEnabled(false)
+    setLivekitToken(null)
+    setLivekitUrl(null)
+    setVoiceError(null)
   }
 
   const leaveRoom = async () => {
@@ -439,18 +440,16 @@ const RoomLive = () => {
       </div>
 
       {/* LiveKit handles ALL audio automatically — no UI needed */}
-      {/* key={roomId+livekitToken} forces full unmount when room changes — prevents audio leaking between rooms */}
       {voiceEnabled && livekitToken && livekitUrl && (
         <LiveKitRoom
-          key={`${roomId}-${livekitToken}`}
           token={livekitToken}
           serverUrl={livekitUrl}
           connect={true}
           audio={true}
           video={false}
           onConnected={() => addSystemMessage('Voice connected')}
-          onDisconnected={() => stopVoice()}
-          onError={(err) => { console.error('LiveKit error:', err); setVoiceError('Voice failed. Try again.'); stopVoice() }}
+          onDisconnected={() => { setVoiceEnabled(false); setLivekitToken(null); setLivekitUrl(null) }}
+          onError={(err) => { console.error('LiveKit error:', err); setVoiceError('Voice failed. Try again.'); setVoiceEnabled(false) }}
         >
           <RoomAudioRenderer />
           <LiveKitSync isMuted={isMuted} onSpeakingChange={onSpeakingChange} onSelfSpeaking={onSelfSpeaking} />

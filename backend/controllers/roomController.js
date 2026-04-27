@@ -78,31 +78,21 @@ const completeSession = async (req, res) => {
     const { room_id, duration_minutes } = req.body;
     const points = Math.max(10, duration_minutes * 2);
 
-    // sessions table may not exist in fresh Aiven DB — gracefully skip if missing
-    try {
-      await db.query(
-        'INSERT INTO sessions (room_id, user_id, duration_minutes, points_earned) VALUES (?, ?, ?, ?)',
-        [room_id, req.user.id, duration_minutes, points]
-      );
-    } catch (tblErr) {
-      console.warn('sessions table missing — skipping session insert. Run database.sql to create it.');
-    }
+    await db.query(
+      'INSERT INTO sessions (room_id, user_id, duration_minutes, points_earned) VALUES (?, ?, ?, ?)',
+      [room_id, req.user.id, duration_minutes, points]
+    );
+    await db.query(
+      'UPDATE users SET total_sessions = total_sessions + 1, total_points = total_points + ? WHERE id = ?',
+      [points, req.user.id]
+    );
 
-    // Update user stats — safe even without sessions table
-    try {
-      await db.query(
-        'UPDATE users SET total_sessions = total_sessions + 1, total_points = total_points + ? WHERE id = ?',
-        [points, req.user.id]
-      );
-      const [users] = await db.query('SELECT total_sessions FROM users WHERE id = ?', [req.user.id]);
-      const sessionCount = users[0]?.total_sessions || 0;
-      let level = 'Beginner';
-      if (sessionCount >= 50) level = 'Advanced';
-      else if (sessionCount >= 15) level = 'Intermediate';
-      await db.query('UPDATE users SET level = ? WHERE id = ?', [level, req.user.id]);
-    } catch (statErr) {
-      console.warn('Could not update user stats — columns may be missing:', statErr.message);
-    }
+    const [users] = await db.query('SELECT total_sessions FROM users WHERE id = ?', [req.user.id]);
+    const sessions = users[0].total_sessions;
+    let level = 'Beginner';
+    if (sessions >= 50) level = 'Advanced';
+    else if (sessions >= 15) level = 'Intermediate';
+    await db.query('UPDATE users SET level = ? WHERE id = ?', [level, req.user.id]);
 
     res.json({ success: true, message: 'Session completed!', points_earned: points });
   } catch (err) {
@@ -118,25 +108,15 @@ const closeRoom = async (req, res) => {
 
     const [rooms] = await db.query('SELECT * FROM rooms WHERE id = ?', [id]);
     if (rooms.length === 0) return res.status(404).json({ success: false, message: 'Room not found' });
-
-    // Allow close if: user is host OR room is already being cleaned up (force close)
     if (rooms[0].host_id !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Only the host can end this room' });
     }
 
-    // Try with ended_at first, fall back without it if column doesn't exist in DB yet
-    try {
-      await db.query('UPDATE rooms SET status = "closed", ended_at = NOW() WHERE id = ?', [id]);
-    } catch (colErr) {
-      // ended_at column missing in this DB — use safe fallback
-      await db.query('UPDATE rooms SET status = "closed" WHERE id = ?', [id]);
-    }
+    // Mark room as closed and set ended_at
+    await db.query('UPDATE rooms SET status = "closed", ended_at = NOW() WHERE id = ?', [id]);
 
     // Mark all active participants as left
-    await db.query(
-      'UPDATE room_participants SET left_at = NOW() WHERE room_id = ? AND left_at IS NULL',
-      [id]
-    );
+    await db.query('UPDATE room_participants SET left_at = NOW() WHERE room_id = ? AND left_at IS NULL', [id]);
 
     res.json({ success: true, message: 'Room closed.' });
   } catch (err) {
@@ -144,5 +124,34 @@ const closeRoom = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
+//26-03
+const getRoomById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rooms] = await db.query(
+      `SELECT r.*, u.name as host_name 
+       FROM rooms r 
+       JOIN users u ON r.host_id = u.id 
+       WHERE r.id = ?`,
+      [id]
+    );
+    if (rooms.length === 0) {
+      return res.status(404).json({ success: false, message: 'Room not found' });
+    }
+    res.json({ success: true, room: rooms[0] });
+  } catch (err) {
+    console.error('Get room error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+//26-03
 
-module.exports = { getRooms, createRoom, joinRoom, completeSession, closeRoom };
+
+
+//26-03
+// module.exports = { getRooms, createRoom, joinRoom, completeSession, closeRoom };
+//26-03
+
+//26-03
+module.exports = { getRooms, createRoom, joinRoom, completeSession, closeRoom, getRoomById };
+//26-03
