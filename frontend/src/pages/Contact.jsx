@@ -42,7 +42,7 @@ const Contact = () => {
             {/* Contact Info */}
             <div className="col-lg-4" data-aos="fade-right">
               {[
-                { icon: 'envelope', title: 'Email Us', detail: 'support@speakcircle.com', color: '#dbeafe' },
+                { icon: 'envelope', title: 'Email Us', detail: 'ankubabu1972@gmail.com', color: '#dbeafe' },
                 { icon: 'chat-dots', title: 'Live Chat', detail: 'Available 9AM – 6PM IST', color: '#dcfce7' },
                 { icon: 'geo-alt', title: 'Location', detail: 'New Delhi, India 🇮🇳', color: '#fef3c7' },
               ].map((c, i) => (
