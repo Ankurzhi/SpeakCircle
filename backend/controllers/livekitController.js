@@ -2,25 +2,32 @@ const { AccessToken } = require('livekit-server-sdk')
 
 const getLiveKitToken = async (req, res) => {
   try {
-    const { roomId } = req.params
+    const { id: roomId } = req.params
 
-    // Create a LiveKit access token for this user
+    if (!process.env.LIVEKIT_API_KEY || !process.env.LIVEKIT_API_SECRET) {
+      return res.status(500).json({ success: false, message: 'LiveKit not configured' })
+    }
+
     const token = new AccessToken(
       process.env.LIVEKIT_API_KEY,
       process.env.LIVEKIT_API_SECRET,
       {
         identity: String(req.user.id),
         name: req.user.name,
+        ttl: '4h', // token valid for 4 hours
       }
     )
 
-    // Give this user permission to join the specific room
+    // Prefix room name with app name — prevents any collision with other projects
+    // using the same LiveKit account. Format: speakcircle-room-{id}
+    const liveKitRoomName = `speakcircle-room-${roomId}`
+
     token.addGrant({
       roomJoin: true,
-      room: String(roomId),
-      canPublish: true,      // can send audio
-      canSubscribe: true,    // can receive audio
-      canPublishData: true,  // can send data messages
+      room: liveKitRoomName,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
     })
 
     const jwt = await token.toJwt()
@@ -32,7 +39,7 @@ const getLiveKitToken = async (req, res) => {
     })
   } catch (err) {
     console.error('LiveKit token error:', err)
-    res.status(500).json({ success: false, message: 'Could not generate token' })
+    res.status(500).json({ success: false, message: 'Could not generate voice token' })
   }
 }
 

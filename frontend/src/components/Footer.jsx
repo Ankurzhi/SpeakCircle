@@ -1,53 +1,98 @@
 import { Link } from 'react-router-dom'
 
+// ── Social links — update the href values to your real profiles ───────────────
+const SOCIAL_LINKS = [
+  { icon: 'instagram',  href: 'https://instagram.com/samsung_ankur_',  label: 'Instagram' },
+  { icon: 'facebook',   href: 'https://facebook.com/ankur.ankurraj5245',                  label: 'Facebook'  },
+  { icon: 'github',     href: 'https://github.com/Ankurzhi',                    label: 'GitHub'    },
+  { icon: 'linkedin',   href: 'https://linkedin.com/in/ankurkumarzhi',                  label: 'LinkedIn'  },
+  { icon: 'globe',    href: 'https://ankurzhi.github.io/Portfolio/',                   label: 'Potfollio'   },
+  
+]
+
+// ── Internal page links ───────────────────────────────────────────────────────
+const PLATFORM_LINKS = [
+  { label: 'Home',           to: '/home'          },
+  { label: 'Dashboard',      to: '/dashboard' },
+  { label: 'Speaking Rooms', to: '/room'      },
+  { label: 'Profile',        to: '/profile'   },
+  { label: 'Get Started',    to: '/register'  },
+]
+
+const INFO_LINKS = [
+  { label: 'About Us',       to: '/about'   },
+  { label: 'FAQ',            to: '/faq'     },
+  { label: 'Contact',        to: '/contact' },
+  { label: 'Privacy Policy', to: '/privacy' },
+]
+
 const Footer = () => {
   return (
     <footer className="sc-footer">
       <div className="container">
         <div className="row g-4">
-          {/* Brand */}
+
+          {/* ── Brand + socials ─────────────────────────────────────────────── */}
           <div className="col-lg-4 col-md-6">
             <div className="brand">
               <i className="bi bi-mic-fill me-2" style={{ color: 'var(--primary)' }}></i>
               SpeakCircle
             </div>
             <p style={{ fontSize: '.92rem', lineHeight: 1.7, maxWidth: 300 }}>
-              A platform where students and learners connect to practice speaking English confidently with real people.
+              A platform where students and learners connect to practice speaking
+              English confidently with real people.
             </p>
-            <div className="d-flex gap-3 mt-3">
-              {['twitter', 'instagram', 'linkedin', 'youtube'].map(icon => (
-                <a key={icon} href="#" className="social-icon"
+
+            {/* Social icons */}
+            <div className="d-flex flex-wrap gap-2 mt-3">
+              {SOCIAL_LINKS.map(({ icon, href, label }) => (
+                <a
+                  key={icon}
+                  href={href}
+                  target="_blank"          /* opens in new tab */
+                  rel="noopener noreferrer"
+                  aria-label={label}
+                  title={label}
                   style={{
-                    width: 36, height: 36, borderRadius: '50%',
+                    width: 38, height: 38, borderRadius: '50%',
                     background: 'rgba(255,255,255,.08)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: 'rgba(255,255,255,.7)', transition: '0.3s'
-                  }}>
-                  <i className={`bi bi-${icon}`}></i>
+                    color: 'rgba(255,255,255,.75)',
+                    transition: 'background 0.25s, color 0.25s',
+                    textDecoration: 'none',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'var(--primary)'
+                    e.currentTarget.style.color = '#fff'
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,.08)'
+                    e.currentTarget.style.color = 'rgba(255,255,255,.75)'
+                  }}
+                >
+                  <i className={`bi bi-${icon}`} style={{ fontSize: 16 }}></i>
                 </a>
               ))}
             </div>
           </div>
 
-          {/* Platform */}
+          {/* ── Platform links ──────────────────────────────────────────────── */}
           <div className="col-lg-2 col-md-3 col-6">
             <div className="footer-title">Platform</div>
-            <Link to="/">Home</Link>
-            <Link to="/dashboard">Dashboard</Link>
-            <Link to="/room">Speaking Rooms</Link>
-            <Link to="/register">Get Started</Link>
+            {PLATFORM_LINKS.map(({ label, to }) => (
+              <Link key={to} to={to}>{label}</Link>
+            ))}
           </div>
 
-          {/* Info */}
+          {/* ── Info links ──────────────────────────────────────────────────── */}
           <div className="col-lg-2 col-md-3 col-6">
             <div className="footer-title">Information</div>
-            <Link to="/about">About Us</Link>
-            <Link to="/faq">FAQ</Link>
-            <Link to="/contact">Contact</Link>
-            <Link to="/privacy">Privacy Policy</Link>
+            {INFO_LINKS.map(({ label, to }) => (
+              <Link key={to} to={to}>{label}</Link>
+            ))}
           </div>
 
-          {/* Contact */}
+          {/* ── Newsletter ──────────────────────────────────────────────────── */}
           <div className="col-lg-4 col-md-6">
             <div className="footer-title">Stay Updated</div>
             <p style={{ fontSize: '.9rem', marginBottom: 14 }}>
@@ -65,7 +110,10 @@ const Footer = () => {
                   borderRadius: 8,
                 }}
               />
-              <button className="btn btn-primary btn-sm px-3" style={{ borderRadius: 8, whiteSpace: 'nowrap' }}>
+              <button
+                className="btn btn-primary btn-sm px-3"
+                style={{ borderRadius: 8, whiteSpace: 'nowrap' }}
+              >
                 Subscribe
               </button>
             </div>

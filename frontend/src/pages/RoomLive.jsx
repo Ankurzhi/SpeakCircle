@@ -116,11 +116,18 @@ const RoomLive = () => {
   const [showParticipants, setShowParticipants] = useState(false)
 
   // LiveKit voice state
-  const [livekitToken, setLivekitToken] = useState(null)
-  const [livekitUrl, setLivekitUrl] = useState(null)
-  const [voiceEnabled, setVoiceEnabled] = useState(false)
-  const [voiceLoading, setVoiceLoading] = useState(false)
-  const [voiceError, setVoiceError] = useState(null)
+  // Single voice state object — batched updates prevent the re-render loop
+  // where onDisconnected fires multiple setState calls causing LiveKitRoom to remount
+  const [voice, setVoice] = useState({ enabled: false, token: null, url: null, loading: false, error: null })
+  // Track which roomId this voice session belongs to
+  const voiceRoomRef = useRef(null)
+  // Convenience aliases so existing JSX doesn't need changing
+  const voiceEnabled = voice.enabled
+  const livekitToken = voice.token
+  const livekitUrl = voice.url
+  const voiceLoading = voice.loading
+  const voiceError = voice.error
+  const setVoiceError = (msg) => setVoice(v => ({ ...v, error: msg }))
   // LiveKit speaking indicators — keyed by userId string
   const [speakingMap, setSpeakingMap] = useState({})
   const [isSelfSpeaking, setIsSelfSpeaking] = useState(false)
@@ -245,27 +252,32 @@ const RoomLive = () => {
   }
 
   const startVoice = async () => {
-    setVoiceLoading(true)
-    setVoiceError(null)
+    setVoice(v => ({ ...v, loading: true, error: null }))
     try {
       const res = await getLiveKitToken(roomId)
-      setLivekitToken(res.data.token)
-      setLivekitUrl(res.data.url)
-      setVoiceEnabled(true)
+      // Single atomic update — all three values set together, no intermediate renders
+      voiceRoomRef.current = roomId  // record which room this voice belongs to
+      setVoice({ enabled: true, token: res.data.token, url: res.data.url, loading: false, error: null })
     } catch (err) {
-      setVoiceError('Could not connect to voice. Try again.')
       console.error('LiveKit error:', err)
-    } finally {
-      setVoiceLoading(false)
+      setVoice(v => ({ ...v, loading: false, error: 'Could not connect to voice. Try again.' }))
     }
   }
 
   const stopVoice = () => {
-    setVoiceEnabled(false)
-    setLivekitToken(null)
-    setLivekitUrl(null)
-    setVoiceError(null)
+    // Single atomic reset — prevents onDisconnected -> setState -> remount loop
+    setVoice({ enabled: false, token: null, url: null, loading: false, error: null })
   }
+
+  // CRITICAL: if roomId changes while voice is active (e.g. user navigates to
+  // another room in same tab), immediately kill the voice connection.
+  // This is the main guard against audio leaking between rooms.
+  useEffect(() => {
+    if (voice.enabled && voiceRoomRef.current && voiceRoomRef.current !== roomId) {
+      console.warn(`[Voice] roomId changed from ${voiceRoomRef.current} to ${roomId} — stopping voice`)
+      stopVoice()
+    }
+  }, [roomId])
 
   const leaveRoom = async () => {
     stopVoice()
@@ -440,16 +452,18 @@ const RoomLive = () => {
       </div>
 
       {/* LiveKit handles ALL audio automatically — no UI needed */}
+      {/* key={roomId+livekitToken} forces full unmount when room changes — prevents audio leaking between rooms */}
       {voiceEnabled && livekitToken && livekitUrl && (
         <LiveKitRoom
+          key={`${roomId}-${livekitToken}`}
           token={livekitToken}
           serverUrl={livekitUrl}
           connect={true}
           audio={true}
           video={false}
           onConnected={() => addSystemMessage('Voice connected')}
-          onDisconnected={() => { setVoiceEnabled(false); setLivekitToken(null); setLivekitUrl(null) }}
-          onError={(err) => { console.error('LiveKit error:', err); setVoiceError('Voice failed. Try again.'); setVoiceEnabled(false) }}
+          onDisconnected={() => stopVoice()}
+          onError={(err) => { console.error('LiveKit error:', err); setVoiceError('Voice failed. Try again.'); stopVoice() }}
         >
           <RoomAudioRenderer />
           <LiveKitSync isMuted={isMuted} onSpeakingChange={onSpeakingChange} onSelfSpeaking={onSelfSpeaking} />

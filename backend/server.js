@@ -1,42 +1,3 @@
-// const express = require('express');
-// const cors = require('cors');
-// require('dotenv').config();
-
-// const app = express();
-
-// // Middleware
-// app.use(cors({
-//   origin: process.env.CLIENT_URL || 'http://localhost:5173',
-//   credentials: true
-// }));
-// app.use(express.json());
-// app.use(express.urlencoded({ extended: true }));
-
-// // Routes
-// app.use('/api/auth', require('./routes/auth'));
-// app.use('/api/rooms', require('./routes/rooms'));
-// app.use('/api', require('./routes/general'));
-
-// // Health check
-// app.get('/api/health', (req, res) => {
-//   res.json({ status: 'ok', message: 'SpeakCircle API is running 🎤' });
-// });
-
-// // 404 handler
-// app.use((req, res) => {
-//   res.status(404).json({ success: false, message: 'Route not found' });
-// });
-
-// // Error handler
-// app.use((err, req, res, next) => {
-//   console.error(err.stack);
-//   res.status(500).json({ success: false, message: 'Internal server error' });
-// });
-
-// const PORT = process.env.PORT || 5000;
-// app.listen(PORT, () => {
-//   console.log(`🚀 SpeakCircle server running on port ${PORT}`);
-// });
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -44,70 +5,57 @@ const { Server } = require('socket.io');
 require('dotenv').config();
 
 const app = express();
-const server = http.createServer(app); // Wrap express in http server
+const server = http.createServer(app);
 
-// ─── Socket.IO Setup ────────────────────────────────────────────────────────
-// const io = new Server(server, {
-//   cors: {
-//     origin: process.env.CLIENT_URL || 'http://localhost:5173',
-//     methods: ['GET', 'POST'],
-//     credentials: true,
-//   },
-//   pingTimeout: 60000,       // 60s before declaring client disconnected
-//   pingInterval: 25000,      // Send ping every 25s
-//   transports: ['websocket', 'polling'], // Try websocket first, fall back to polling
-// });
-// const io = new Server(server, {
-//   cors: {
-//     origin: [
-//       'http://localhost:5173',
-//       process.env.CLIENT_URL,
-//     ].filter(Boolean),
-//     credentials: true,
-//   },
-// });
+// ─── Allowed origins ──────────────────────────────────────────────────────────
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  process.env.CLIENT_URL,
+].filter(Boolean)
+
+console.log('✅ Allowed CORS origins:', allowedOrigins)
+
+// ─── Socket.IO ────────────────────────────────────────────────────────────────
 const io = new Server(server, {
   cors: {
-    origin: [
-      'http://localhost:5173',
-      'https://speak-circle-eight.vercel.app',
-      process.env.CLIENT_URL,
-    ].filter(Boolean),
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
     credentials: true,
   },
-});
+  // polling first — more reliable on Render free tier and mobile networks
+  transports: ['polling', 'websocket'],
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  upgradeTimeout: 30000,
+  allowUpgrades: true,
+})
 
-// ─── In-memory room state (fast, no DB round-trips for chat/mic) ─────────────
-// roomUsers[roomId] = Map<socketId, { userId, name, avatar, isMuted, isSpeaking }>
-const roomUsers = {};
+// ─── In-memory room state ─────────────────────────────────────────────────────
+const roomUsers = {}
 
-// ─── Socket.IO Authentication Middleware ─────────────────────────────────────
-const jwt = require('jsonwebtoken');
+// ─── Socket.IO JWT Auth Middleware ────────────────────────────────────────────
+const jwt = require('jsonwebtoken')
 io.use((socket, next) => {
-  const token = socket.handshake.auth.token;
-  if (!token) return next(new Error('Authentication error: no token'));
+  const token = socket.handshake.auth.token
+  if (!token) return next(new Error('No token provided'))
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    socket.user = decoded; // attach user info to socket
-    next();
+    const decoded = jwt.verify(token, process.env.JWT_SECRET)
+    socket.user = decoded
+    next()
   } catch (err) {
-    next(new Error('Authentication error: invalid token'));
+    next(new Error('Invalid token'))
   }
-});
+})
 
-// ─── Socket.IO Event Handlers ────────────────────────────────────────────────
+// ─── Socket.IO Events ─────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
-  console.log(`✅ Socket connected: ${socket.id} | User: ${socket.user.name}`);
+  console.log(`✅ Socket connected: ${socket.id} | User: ${socket.user.name}`)
 
-  // ── JOIN ROOM ──────────────────────────────────────────────────────────────
   socket.on('join-room', ({ roomId }) => {
-    if (!roomId) return;
-
-    socket.join(roomId);
-
-    // Initialize room map if needed
-    if (!roomUsers[roomId]) roomUsers[roomId] = new Map();
-
+    if (!roomId) return
+    socket.join(String(roomId))
+    if (!roomUsers[roomId]) roomUsers[roomId] = new Map()
     const userData = {
       userId: socket.user.id,
       name: socket.user.name,
@@ -115,177 +63,171 @@ io.on('connection', (socket) => {
       isMuted: false,
       isSpeaking: false,
       joinedAt: new Date().toISOString(),
-    };
+    }
+    roomUsers[roomId].set(socket.id, userData)
+    socket.currentRoom = roomId
+    socket.to(String(roomId)).emit('user-joined', userData)
+    socket.emit('room-participants', Array.from(roomUsers[roomId].values()))
+    console.log(`👤 ${socket.user.name} joined room ${roomId} (${roomUsers[roomId].size} total)`)
+  })
 
-    roomUsers[roomId].set(socket.id, userData);
-    socket.currentRoom = roomId; // track for cleanup on disconnect
-
-    // Tell everyone else in the room that a new user joined
-    socket.to(roomId).emit('user-joined', userData);
-
-    // Send the new user the current participant list
-    socket.emit('room-participants', Array.from(roomUsers[roomId].values()));
-
-    console.log(`👤 ${socket.user.name} joined room ${roomId}`);
-  });
-
-  // ── LEAVE ROOM ────────────────────────────────────────────────────────────
   socket.on('leave-room', ({ roomId }) => {
-    _leaveRoom(socket, roomId);
-  });
+    _leaveRoom(socket, roomId)
+  })
 
-  // ── CHAT MESSAGE ─────────────────────────────────────────────────────────
   socket.on('chat-message', ({ roomId, message }) => {
-    if (!roomId || !message?.trim()) return;
-
+    if (!roomId || !message?.trim()) return
     const payload = {
       id: `${socket.id}-${Date.now()}`,
       userId: socket.user.id,
       name: socket.user.name,
-      message: message.trim().slice(0, 500), // limit to 500 chars
+      message: message.trim().slice(0, 500),
       timestamp: new Date().toISOString(),
-    };
+    }
+    io.to(String(roomId)).emit('chat-message', payload)
+  })
 
-    // Broadcast to EVERYONE in room (including sender)
-    io.to(roomId).emit('chat-message', payload);
-  });
-
-  // ── MIC TOGGLE ───────────────────────────────────────────────────────────
   socket.on('toggle-mute', ({ roomId, isMuted }) => {
-    if (!roomId || !roomUsers[roomId]) return;
-
-    const user = roomUsers[roomId].get(socket.id);
+    if (!roomId || !roomUsers[roomId]) return
+    const user = roomUsers[roomId].get(socket.id)
     if (user) {
-      user.isMuted = isMuted;
-      socket.to(roomId).emit('user-mute-changed', {
+      user.isMuted = isMuted
+      socket.to(String(roomId)).emit('user-mute-changed', {
         socketId: socket.id,
         userId: socket.user.id,
         isMuted,
-      });
+      })
     }
-  });
+  })
 
-  // ── SPEAKING INDICATOR ────────────────────────────────────────────────────
   socket.on('speaking', ({ roomId, isSpeaking }) => {
-    if (!roomId || !roomUsers[roomId]) return;
-
-    const user = roomUsers[roomId].get(socket.id);
+    if (!roomId || !roomUsers[roomId]) return
+    const user = roomUsers[roomId].get(socket.id)
     if (user) {
-      user.isSpeaking = isSpeaking;
-      socket.to(roomId).emit('user-speaking', {
+      user.isSpeaking = isSpeaking
+      socket.to(String(roomId)).emit('user-speaking', {
         socketId: socket.id,
         userId: socket.user.id,
         isSpeaking,
-      });
+      })
     }
-  });
+  })
 
-  // ── TYPING INDICATOR ─────────────────────────────────────────────────────
   socket.on('typing', ({ roomId, isTyping }) => {
-    socket.to(roomId).emit('user-typing', {
+    socket.to(String(roomId)).emit('user-typing', {
       userId: socket.user.id,
       name: socket.user.name,
       isTyping,
-    });
-  });
+    })
+  })
 
-  // ── WebRTC SIGNALING (Peer-to-Peer Voice) ─────────────────────────────────
-  // These relay WebRTC offers/answers/ICE candidates between peers
+  // ── WebRTC signaling ────────────────────────────────────────────────────────
   socket.on('webrtc-offer', ({ to, offer }) => {
-    io.to(to).emit('webrtc-offer', { from: socket.id, offer });
-  });
+    console.log(`📨 Relaying offer from ${socket.id} to ${to}`)
+    io.to(to).emit('webrtc-offer', { from: socket.id, offer })
+  })
 
   socket.on('webrtc-answer', ({ to, answer }) => {
-    io.to(to).emit('webrtc-answer', { from: socket.id, answer });
-  });
+    console.log(`📨 Relaying answer from ${socket.id} to ${to}`)
+    io.to(to).emit('webrtc-answer', { from: socket.id, answer })
+  })
 
   socket.on('webrtc-ice-candidate', ({ to, candidate }) => {
-    io.to(to).emit('webrtc-ice-candidate', { from: socket.id, candidate });
-  });
+    io.to(to).emit('webrtc-ice-candidate', { from: socket.id, candidate })
+  })
 
-  // ── DISCONNECT ────────────────────────────────────────────────────────────
   socket.on('disconnect', (reason) => {
-    console.log(`❌ Socket disconnected: ${socket.id} | Reason: ${reason}`);
+    console.log(`❌ Socket disconnected: ${socket.id} | Reason: ${reason}`)
     if (socket.currentRoom) {
-      _leaveRoom(socket, socket.currentRoom);
+      _leaveRoom(socket, socket.currentRoom)
     }
-  });
-});
+  })
+})
 
-// ─── Helper: remove user from room ───────────────────────────────────────────
 function _leaveRoom(socket, roomId) {
-  socket.leave(roomId);
-
+  socket.leave(String(roomId))
   if (roomUsers[roomId]) {
-    roomUsers[roomId].delete(socket.id);
-
-    // Notify others
-    socket.to(roomId).emit('user-left', {
+    roomUsers[roomId].delete(socket.id)
+    socket.to(String(roomId)).emit('user-left', {
       socketId: socket.id,
       userId: socket.user?.id,
       name: socket.user?.name,
-    });
-
-    // Clean up empty rooms
+    })
     if (roomUsers[roomId].size === 0) {
-      delete roomUsers[roomId];
+      delete roomUsers[roomId]
     }
   }
+  console.log(`👋 ${socket.user?.name} left room ${roomId}`)
+}
 
-  console.log(`👋 ${socket.user?.name} left room ${roomId}`);
+// ─── Auto-close rooms after 12 hours ─────────────────────────────────────────
+try {
+  const cron = require('node-cron')
+  const db = require('./config/db')
+  const { safeCloseRoom } = require('./controllers/roomController')
+
+  // Runs every 30 minutes — checks for rooms open longer than 12 hours
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      const [expiredRooms] = await db.query(
+        "SELECT id, title FROM rooms WHERE status != 'closed' AND created_at < DATE_SUB(NOW(), INTERVAL 12 HOUR)"
+      )
+      if (expiredRooms.length === 0) return
+
+      for (const room of expiredRooms) {
+        try {
+          await safeCloseRoom(room.id)
+          io.to(String(room.id)).emit('room-closed', {
+            message: `Room "${room.title}" was automatically closed after 12 hours.`
+          })
+          console.log(`⏰ Auto-closed room ${room.id}: "${room.title}"`)
+        } catch (roomErr) {
+          console.error(`⏰ Failed to auto-close room ${room.id}:`, roomErr.message)
+        }
+      }
+      console.log(`⏰ Auto-close complete: ${expiredRooms.length} room(s) closed`)
+    } catch (err) {
+      console.error('Auto-close cron error:', err.message)
+    }
+  })
+  console.log('⏰ Auto-close cron scheduled (every 30 min, 12h limit)')
+} catch (e) {
+  console.log('node-cron not installed, skipping auto-close:', e.message)
 }
 
 // ─── Express Middleware ───────────────────────────────────────────────────────
-// app.use(cors({
-//   origin: process.env.CLIENT_URL || 'http://localhost:5173',
-//   credentials: true,
-// }));
-// app.use(express.json());
-// app.use(express.urlencoded({ extended: true }));
-// app.use(cors({
-//   origin: [
-//     'http://localhost:5173',
-//     process.env.CLIENT_URL,
-//   ].filter(Boolean),
-//   credentials: true,
-// }));
 app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'https://speak-circle-eight.vercel.app',
-    process.env.CLIENT_URL,
-  ].filter(Boolean),
+  origin: allowedOrigins,
   credentials: true,
-}));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+}))
+app.use(express.json())
+app.use(express.urlencoded({ extended: true }))
 
-
-// ─── REST Routes ─────────────────────────────────────────────────────────────
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/rooms', require('./routes/rooms'));
-app.use('/api', require('./routes/general'));
+// ─── Routes ───────────────────────────────────────────────────────────────────
+app.use('/api/auth', require('./routes/auth'))
+app.use('/api/rooms', require('./routes/rooms'))
+app.use('/api', require('./routes/general'))
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'SpeakCircle API is running 🎤' });
-});
-app.get("/", (req, res) => {
-  res.send("Backend is running 🚀");
-});
+  res.json({ status: 'ok', message: 'SpeakCircle API is running 🎤', timestamp: new Date() })
+})
+
+app.get('/', (req, res) => {
+  res.send('SpeakCircle Backend is running 🚀')
+})
 
 app.use((req, res) => {
-  res.status(404).json({ success: false, message: 'Route not found' });
-});
+  res.status(404).json({ success: false, message: 'Route not found' })
+})
 
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ success: false, message: 'Internal server error' });
-});
+  console.error(err.stack)
+  res.status(500).json({ success: false, message: 'Internal server error' })
+})
 
-// ─── Start Server ─────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 5000;
+// ─── Start ────────────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 5000
 server.listen(PORT, () => {
-  console.log(`🚀 SpeakCircle server running on port ${PORT}`);
-  console.log(`🔌 Socket.IO is ready for real-time connections`);
-});
-
+  console.log(`🚀 SpeakCircle server running on port ${PORT}`)
+  console.log(`🔌 Socket.IO ready`)
+})

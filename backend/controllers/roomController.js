@@ -63,7 +63,7 @@ const joinRoom = async (req, res) => {
       'INSERT INTO room_participants (room_id, user_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE left_at = NULL, joined_at = NOW()',
       [id, req.user.id]
     );
-    await db.query('UPDATE rooms SET current_participants = current_participants + 1, status = "active" WHERE id = ?', [id]);
+    await db.query("UPDATE rooms SET current_participants = current_participants + 1, status = 'active' WHERE id = ?", [id]);
 
     res.json({ success: true, message: 'Joined room!' });
   } catch (err) {
@@ -78,21 +78,31 @@ const completeSession = async (req, res) => {
     const { room_id, duration_minutes } = req.body;
     const points = Math.max(10, duration_minutes * 2);
 
-    await db.query(
-      'INSERT INTO sessions (room_id, user_id, duration_minutes, points_earned) VALUES (?, ?, ?, ?)',
-      [room_id, req.user.id, duration_minutes, points]
-    );
-    await db.query(
-      'UPDATE users SET total_sessions = total_sessions + 1, total_points = total_points + ? WHERE id = ?',
-      [points, req.user.id]
-    );
+    // sessions table may not exist in fresh Aiven DB — gracefully skip if missing
+    try {
+      await db.query(
+        'INSERT INTO sessions (room_id, user_id, duration_minutes, points_earned) VALUES (?, ?, ?, ?)',
+        [room_id, req.user.id, duration_minutes, points]
+      );
+    } catch (tblErr) {
+      console.warn('sessions table missing — skipping session insert. Run database.sql to create it.');
+    }
 
-    const [users] = await db.query('SELECT total_sessions FROM users WHERE id = ?', [req.user.id]);
-    const sessions = users[0].total_sessions;
-    let level = 'Beginner';
-    if (sessions >= 50) level = 'Advanced';
-    else if (sessions >= 15) level = 'Intermediate';
-    await db.query('UPDATE users SET level = ? WHERE id = ?', [level, req.user.id]);
+    // Update user stats — safe even without sessions table
+    try {
+      await db.query(
+        'UPDATE users SET total_sessions = total_sessions + 1, total_points = total_points + ? WHERE id = ?',
+        [points, req.user.id]
+      );
+      const [users] = await db.query('SELECT total_sessions FROM users WHERE id = ?', [req.user.id]);
+      const sessionCount = users[0]?.total_sessions || 0;
+      let level = 'Beginner';
+      if (sessionCount >= 50) level = 'Advanced';
+      else if (sessionCount >= 15) level = 'Intermediate';
+      await db.query('UPDATE users SET level = ? WHERE id = ?', [level, req.user.id]);
+    } catch (statErr) {
+      console.warn('Could not update user stats — columns may be missing:', statErr.message);
+    }
 
     res.json({ success: true, message: 'Session completed!', points_earned: points });
   } catch (err) {
@@ -101,57 +111,101 @@ const completeSession = async (req, res) => {
   }
 };
 
+// ── Shared helper: safely close a room ──────────────────────────────────────
+const safeCloseRoom = async (roomId) => {
+  // Step 1: Try to close with ended_at, fall back without it
+  try {
+    await db.query(
+      "UPDATE rooms SET status = 'closed', ended_at = NOW() WHERE id = ?",
+      [roomId]
+    );
+    console.log(`Room ${roomId} closed with ended_at`);
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      await db.query("UPDATE rooms SET status = 'closed' WHERE id = ?", [roomId]);
+      console.log(`Room ${roomId} closed without ended_at (column missing)`);
+    } else {
+      throw e;
+    }
+  }
+
+  // Step 2: Try to mark participants left, fall back if left_at missing
+  try {
+    await db.query(
+      'UPDATE room_participants SET left_at = NOW() WHERE room_id = ? AND left_at IS NULL',
+      [roomId]
+    );
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      // left_at column missing — just log, room is still marked closed
+      console.warn(`room_participants.left_at column missing for room ${roomId} — skipping`);
+    } else {
+      throw e;
+    }
+  }
+};
+
 // Close room — host only
 const closeRoom = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [rooms] = await db.query('SELECT * FROM rooms WHERE id = ?', [id]);
-    if (rooms.length === 0) return res.status(404).json({ success: false, message: 'Room not found' });
-    if (rooms[0].host_id !== req.user.id) {
-      return res.status(403).json({ success: false, message: 'Only the host can end this room' });
-    }
+    console.log(`[closeRoom] id=${id} req.user=`, req.user);
 
-    // Mark room as closed and set ended_at
-    await db.query('UPDATE rooms SET status = "closed", ended_at = NOW() WHERE id = ?', [id]);
+    const [rooms] = await db.query('SELECT id, host_id, status FROM rooms WHERE id = ?', [id]);
+    console.log(`[closeRoom] DB returned:`, rooms);
 
-    // Mark all active participants as left
-    await db.query('UPDATE room_participants SET left_at = NOW() WHERE room_id = ? AND left_at IS NULL', [id]);
-
-    res.json({ success: true, message: 'Room closed.' });
-  } catch (err) {
-    console.error('Close room error:', err);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-};
-//26-03
-const getRoomById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const [rooms] = await db.query(
-      `SELECT r.*, u.name as host_name 
-       FROM rooms r 
-       JOIN users u ON r.host_id = u.id 
-       WHERE r.id = ?`,
-      [id]
-    );
     if (rooms.length === 0) {
       return res.status(404).json({ success: false, message: 'Room not found' });
     }
-    res.json({ success: true, room: rooms[0] });
+
+    const room = rooms[0];
+
+    // Loose equality: handles number vs string mismatch from JWT / MySQL
+    if (room.host_id != req.user.id) {
+      console.log(`[closeRoom] DENIED host_id=${room.host_id}(${typeof room.host_id}) req.user.id=${req.user.id}(${typeof req.user.id})`);
+      return res.status(403).json({ success: false, message: 'Only the host can end this room' });
+    }
+
+    if (room.status === 'closed') {
+      return res.json({ success: true, message: 'Room already closed.' });
+    }
+
+    await safeCloseRoom(id);
+
+    console.log(`[closeRoom] Room ${id} closed successfully`);
+    res.json({ success: true, message: 'Room closed.' });
   } catch (err) {
-    console.error('Get room error:', err);
+    console.error('[closeRoom] ERROR:', err.message, '| code:', err.code, '| sql:', err.sql);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      detail: err.message,  // shown in browser console so you can see exact cause
+      code: err.code
+    });
+  }
+};
+
+
+// Get single room by ID
+const getRoomById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await db.query(
+      `SELECT r.*, u.name as host_name
+       FROM rooms r
+       JOIN users u ON r.host_id = u.id
+       WHERE r.id = ?`,
+      [id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Room not found' });
+    }
+    res.json({ success: true, room: rows[0] });
+  } catch (err) {
+    console.error('Get room by ID error:', err.message);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
-//26-03
 
-
-
-//26-03
-// module.exports = { getRooms, createRoom, joinRoom, completeSession, closeRoom };
-//26-03
-
-//26-03
-module.exports = { getRooms, createRoom, joinRoom, completeSession, closeRoom, getRoomById };
-//26-03
+module.exports = { getRooms, createRoom, joinRoom, completeSession, closeRoom, safeCloseRoom, getRoomById };

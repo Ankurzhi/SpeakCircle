@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import AOS from 'aos'
 import { useAuth } from './context/AuthContext'
 import { SocketProvider } from './context/SocketContext'
@@ -19,6 +19,13 @@ import Contact from './pages/Contact'
 import FAQ from './pages/FAQ'
 import Profile from './pages/Profile'
 
+// Scroll to top on every route change
+const ScrollToTop = () => {
+  const { pathname } = useLocation()
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }) }, [pathname])
+  return null
+}
+
 // Protected route wrapper
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth()
@@ -29,22 +36,15 @@ const ProtectedRoute = ({ children }) => {
 function App() {
   const { loading } = useAuth()
 
-useEffect(() => {
-  AOS.init({ duration: 700, easing: 'ease-out-cubic', once: true, offset: 60 })
-
-  // Keep Render backend awake — ping every 10 minutes
-  const ping = () => {
-    fetch(`${import.meta.env.VITE_API_URL}/api/health`).catch(() => {})
-  }
-  ping()
-  const interval = setInterval(ping, 600000)
-  return () => clearInterval(interval)
-}, [])
+  useEffect(() => {
+    AOS.init({ duration: 700, easing: 'ease-out-cubic', once: true, offset: 60 })
+  }, [])
 
   if (loading) return <Loader />
 
   return (
     <SocketProvider>
+      <ScrollToTop />
       <Routes>
         {/* Live room — fullscreen, no Navbar/Footer */}
         <Route path="/room/:id/live" element={
