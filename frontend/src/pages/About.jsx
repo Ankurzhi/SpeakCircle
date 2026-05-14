@@ -66,7 +66,7 @@ const About = () => {
         <div className="container">
           <div className="row align-items-center g-5">
             <div className="col-lg-6" data-aos="fade-right">
-              <span className="section-tag">📖 OUR STORY</span>
+              <span className="section-tag">📖OUR STORY</span>
               <h2 className="section-title mt-2">Built by learners, for learners</h2>
               <p style={{ color: 'var(--gray-600)', lineHeight: 1.8, marginTop: 16 }}>
                 In 2025, our founder Ankur struggled with spoken English despite years of study. He knew grammar, he understood movies but freezing up in conversations was a constant problem.
