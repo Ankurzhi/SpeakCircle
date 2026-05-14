@@ -7,6 +7,10 @@ import 'bootstrap/dist/css/bootstrap.min.css'
 import 'bootstrap-icons/font/bootstrap-icons.css'
 import 'aos/dist/aos.css'
 import './styles/global.css'
+import ReactGA from "react-ga4";
+
+ReactGA.initialize("G-B7BL6KWCCN");
+ReactGA.send("pageview");
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
