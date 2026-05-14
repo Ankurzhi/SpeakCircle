@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 
 const team = [
-  { name: 'Rahul Sharma', role: 'Founder & CEO', emoji: '👨‍💻' },
+  { name: 'Ankur Kumar', role: 'Founder & CEO', emoji: '👨‍💻' },
   { name: 'Priya Gupta', role: 'Head of Community', emoji: '👩‍🏫' },
   { name: 'Arjun Mehta', role: 'Lead Developer', emoji: '🧑‍💻' },
   { name: 'Sneha Patel', role: 'Content & Curriculum', emoji: '📚' },
@@ -69,7 +69,7 @@ const About = () => {
               <span className="section-tag">📖 OUR STORY</span>
               <h2 className="section-title mt-2">Built by learners, for learners</h2>
               <p style={{ color: 'var(--gray-600)', lineHeight: 1.8, marginTop: 16 }}>
-                In 2023, our founder Rahul struggled with spoken English despite years of study. He knew grammar, he understood movies — but freezing up in conversations was a constant problem.
+                In 2025, our founder Ankur struggled with spoken English despite years of study. He knew grammar, he understood movies — but freezing up in conversations was a constant problem.
               </p>
               <p style={{ color: 'var(--gray-600)', lineHeight: 1.8, marginTop: 12 }}>
                 The solution? Practice daily with real people. He built SpeakCircle to connect learners worldwide, making daily speaking practice as easy as joining a room online.
