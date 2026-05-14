@@ -8,21 +8,35 @@ const app = express();
 const server = http.createServer(app);
 
 // ─── Allowed origins ──────────────────────────────────────────────────────────
+// CLIENT_URL must be set in Render env vars as: https://speak-circle-eight.vercel.app
+// EXTRA_ORIGINS can be a comma-separated list of additional allowed origins
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  process.env.CLIENT_URL,
-].filter(Boolean)
+  'https://speak-circle-eight.vercel.app',  // hardcoded fallback — always works
+  process.env.CLIENT_URL,                    // from Render env var
+  ...(process.env.EXTRA_ORIGINS ? process.env.EXTRA_ORIGINS.split(',').map(o => o.trim()) : []),
+].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i) // deduplicate
 
 console.log('✅ Allowed CORS origins:', allowedOrigins)
 
+// CORS options — shared between Express and Socket.IO
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, Postman, curl)
+    if (!origin) return callback(null, true)
+    if (allowedOrigins.includes(origin)) return callback(null, true)
+    console.warn('❌ CORS blocked origin:', origin)
+    callback(new Error(`CORS: origin ${origin} not allowed`))
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+}
+
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
 const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ['GET', 'POST'],
-    credentials: true,
-  },
+  cors: corsOptions,
   // polling first — more reliable on Render free tier and mobile networks
   transports: ['polling', 'websocket'],
   pingTimeout: 60000,
@@ -196,10 +210,8 @@ try {
 }
 
 // ─── Express Middleware ───────────────────────────────────────────────────────
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true,
-}))
+app.options('*', cors(corsOptions))
+app.use(cors(corsOptions))
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 
