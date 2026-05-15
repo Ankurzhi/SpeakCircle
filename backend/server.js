@@ -68,8 +68,9 @@ io.on('connection', (socket) => {
 
   socket.on('join-room', ({ roomId }) => {
     if (!roomId) return
-    socket.join(String(roomId))
-    if (!roomUsers[roomId]) roomUsers[roomId] = new Map()
+    const rid = String(roomId) // ALWAYS use string key — prevents number/string mismatch on disconnect
+    socket.join(rid)
+    if (!roomUsers[rid]) roomUsers[rid] = new Map()
     const userData = {
       userId: socket.user.id,
       name: socket.user.name,
@@ -78,15 +79,15 @@ io.on('connection', (socket) => {
       isSpeaking: false,
       joinedAt: new Date().toISOString(),
     }
-    roomUsers[roomId].set(socket.id, userData)
-    socket.currentRoom = roomId
-    socket.to(String(roomId)).emit('user-joined', userData)
-    socket.emit('room-participants', Array.from(roomUsers[roomId].values()))
-    console.log(`👤 ${socket.user.name} joined room ${roomId} (${roomUsers[roomId].size} total)`)
+    roomUsers[rid].set(socket.id, userData)
+    socket.currentRoom = rid  // always string — matches roomUsers key
+    socket.to(rid).emit('user-joined', userData)
+    socket.emit('room-participants', Array.from(roomUsers[rid].values()))
+    console.log(`👤 ${socket.user.name} joined room ${rid} (${roomUsers[rid].size} total)`)
   })
 
   socket.on('leave-room', ({ roomId }) => {
-    _leaveRoom(socket, roomId)
+    _leaveRoom(socket, String(roomId))
   })
 
   socket.on('chat-message', ({ roomId, message }) => {
@@ -159,19 +160,26 @@ io.on('connection', (socket) => {
 })
 
 function _leaveRoom(socket, roomId) {
-  socket.leave(String(roomId))
-  if (roomUsers[roomId]) {
-    roomUsers[roomId].delete(socket.id)
-    socket.to(String(roomId)).emit('user-left', {
+  const rid = String(roomId) // always string to match roomUsers key
+  socket.leave(rid)
+  const room = roomUsers[rid]
+  if (room && room.has(socket.id)) {
+    const user = room.get(socket.id)
+    room.delete(socket.id)
+    // emit to everyone else STILL in the room
+    socket.to(rid).emit('user-left', {
       socketId: socket.id,
-      userId: socket.user?.id,
-      name: socket.user?.name,
+      userId: user.userId,
+      name: user.name,
     })
-    if (roomUsers[roomId].size === 0) {
-      delete roomUsers[roomId]
+    console.log(`👋 ${user.name} left room ${rid} — ${room.size} remaining`)
+    if (room.size === 0) {
+      delete roomUsers[rid]
+      console.log(`🗑️  Room ${rid} is now empty — cleaned up`)
     }
+  } else {
+    console.log(`⚠️  _leaveRoom called but ${socket.id} not found in room ${rid}`)
   }
-  console.log(`👋 ${socket.user?.name} left room ${roomId}`)
 }
 
 // ─── Auto-close rooms after 12 hours ─────────────────────────────────────────

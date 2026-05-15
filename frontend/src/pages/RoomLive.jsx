@@ -154,16 +154,15 @@ const RoomLive = () => {
   useEffect(() => {
     if (!socket || !joined || !roomId) return
 
-    socket.emit('join-room', { roomId })
-    // BUG FIX 1: room-participants includes YOU — filter yourself out using
-    // loose equality (!=) because JWT id may be number but AuthContext id may be string
+    socket.emit('join-room', { roomId: String(roomId) })
+
+    // room-participants: server sends full list including self — filter self out
     socket.on('room-participants', (list) => {
       setParticipants(list.filter(p => p.userId != user?.id))
     })
 
     socket.on('user-joined', (userData) => {
-      // Also guard with loose equality here
-      if (userData.userId == user?.id) return
+      if (userData.userId == user?.id) return // ignore own join echo
       setParticipants((prev) => {
         if (prev.find((p) => p.socketId === userData.socketId)) return prev
         return [...prev, userData]
@@ -171,12 +170,13 @@ const RoomLive = () => {
       addSystemMessage(`${userData.name} joined the room`)
     })
 
-    // BUG FIX 2: user-left — the filter is correct, but we wrap it so it
-    // always reads the latest state even if socket is re-registered
+    // user-left: uses functional updater so it always has latest state
+    // even if this effect re-runs between the emit and the handler firing
     socket.on('user-left', ({ socketId, name }) => {
+      console.log('[user-left] removing socketId:', socketId)
       setParticipants((prev) => {
-        const next = prev.filter((p) => p.socketId !== socketId)
-        return next
+        console.log('[user-left] prev:', prev.map(p => p.socketId), '→ removing:', socketId)
+        return prev.filter((p) => p.socketId !== socketId)
       })
       if (name) addSystemMessage(`${name} left the room`)
     })
@@ -205,7 +205,9 @@ const RoomLive = () => {
     })
 
     return () => {
-      socket.emit('leave-room', { roomId })
+      // Only remove listeners — do NOT emit leave-room here.
+      // leave-room is emitted by leaveRoom() and by the beforeunload handler below.
+      // Emitting it here causes double-leave on React StrictMode re-mount.
       socket.off('room-participants')
       socket.off('user-joined')
       socket.off('user-left')
@@ -279,7 +281,19 @@ const RoomLive = () => {
     }
   }, [roomId])
 
+  // Emit leave-room on tab close / browser close — covers the case where
+  // user closes the tab without clicking Leave button
+  useEffect(() => {
+    const handleUnload = () => {
+      if (socket && roomId) socket.emit('leave-room', { roomId: String(roomId) })
+    }
+    window.addEventListener('beforeunload', handleUnload)
+    return () => window.removeEventListener('beforeunload', handleUnload)
+  }, [socket, roomId])
+
   const leaveRoom = async () => {
+    // Emit leave-room FIRST before anything else so server updates immediately
+    if (socket) socket.emit('leave-room', { roomId: String(roomId) })
     stopVoice()
     const durationMin = Math.round((Date.now() - sessionStart) / 60000)
     if (durationMin >= 1) {
